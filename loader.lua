@@ -1,16 +1,16 @@
 --[[
-    🌸🐾💖 Yui Hub    |    PRIVATE👾🤫 (EARLY ACCESS - Fixed Boss Auto-Kill & AOE Evade, Zero-Lag Engine, Fixed FPS Jump, Remote-Only Rewards & 16/16 AI Scanner) 💖🐾🌸
-- Boss Tab (Auto Kill Boss + Mobile Boss Selector + Multi-Layer AOE/Ultimate Evade):
+    🌸🐾💖 Yui Hub    |    PRIVATE👾🤫 (EARLY ACCESS - Fixed Boss Auto-Kill & Half-Charge Far Evade, Freeze Character, Fixed Playtime Rewards & Zero-Lag Engine) 💖🐾🌸
+- Boss Tab (Auto Kill Boss + Mobile Boss Selector + Half-Charge AOE/Ultimate Far Evade):
   * Easy mobile 2-column selector: Common, Rare, Epic, Legendary, Mythic, Rainbow/Admin, Alien Boss (Event) & All Bosses
-  * Event-driven deep Boss discovery (Model name, DisplayName, Folder/Tier, Attributes & BillboardGui labels; excludes Pets!)
-  * Auto-hovers cleanly at the boss's Head with noclip hitbox entry, upright velocity lock & multi-channel auto-punch
-  * Instant 0ms DescendantAdded + red-ring/neon-zone/animator/HP AOE & Ultimate evade teleport
-- Clean Punch Tab (Damage Feature & Input Completely Removed):
-  * Keeps Auto Punch, Fast Punch & Punch Speed with low-ping adaptive rate control
+  * Strict creature-verified Boss discovery (excludes Shops, NPCs, Arenas, Bases, Pets & generic props!)
+  * Smoothly tweens to every boss's Head with noclip hitbox entry, upright velocity lock & fast boss punching
+  * Half-charge (50%) skill/ultimate detection + multi-color telegraph evade far outside AOE/ult range (no spawn/despawn timer clutter)
+- Clean Punch Tab:
+  * Keeps Auto Punch + Punch Speed with low-ping adaptive rate control & adds Freeze Character (toggleable ON/OFF)
 - Fixed FPS Jumping & Massive Lag Reduction:
   * Cycle Jump unlocks Roblox TaskScheduler FPS across setfpscap, setfflag & UserGameSettings and trims hub frame overhead
-  * Event-driven boss cache, cached reward spin lookups, pooled petal VFX, visibility-gated RGB & 10Hz active-tab HUD
-- Centered Moveable 16/16 AI Scanner + Threat Detection + Remote-Only Rewards & Auto Spin
+  * Event-driven boss cache, cached reward/spin lookups, pooled petal VFX, visibility-gated RGB & low-usage active-tab HUD
+- Centered Moveable 16/16 AI Scanner + Threat Detection + Fixed Playtime Rewards & Auto Spin
 ]]
 
 ----------------------------------------------------------------
@@ -205,7 +205,7 @@ local DefaultConfig = {
     SmartRebirthGuard = true,
 
     AutoPunch = false,
-    FastPunch = false,
+    FreezeCharacter = false,
     PunchSpeed = 60,
 
     AutoKillBoss = false,
@@ -784,7 +784,7 @@ do
         task.spawn(function()
             local pIdx = 1
             while Config.Active and myGen == Runtime.Gen and UI.Main and UI.Main.Parent do
-                if UI.Main.Visible and not Config.Minimized and (tonumber(Config.CycleJump) or 1) <= 1 and not Config.AIPerfMode and not (Config.RepAntiLag and Runtime.RepGateOpen) then
+                if UI.Main.Visible and not Config.Minimized and not Config.FPSBoost and (tonumber(Config.CycleJump) or 1) <= 1 and not Config.AIPerfMode and not (Config.RepAntiLag and Runtime.RepGateOpen) then
                     local petal = petalPool[pIdx]
                     pIdx = (pIdx % #petalPool) + 1
                     local side = math.random(1, 4)
@@ -799,9 +799,9 @@ do
                         TextTransparency = 1,
                         Rotation = math.random(-140, 140),
                     }):Play()
-                    task.wait(0.45)
+                    task.wait(0.60)
                 else
-                    task.wait(0.85)
+                    task.wait(1.20)
                 end
             end
         end)
@@ -811,13 +811,13 @@ do
         task.spawn(function()
             local t = 0
             while Config.Active and myGen == Runtime.Gen and UI.Main and UI.Main.Parent do
-                local lowOverhead = (tonumber(Config.CycleJump) or 1) > 1 or Config.AIPerfMode or (Runtime.RepGateOpen and (Config.FastRep or Config.AIFastRep))
+                local lowOverhead = (tonumber(Config.CycleJump) or 1) > 1 or Config.AIPerfMode or Config.FPSBoost or (Runtime.RepGateOpen and (Config.FastRep or Config.AIFastRep))
                 local vis = UI.Main.Visible
                 local mainVis = vis and not Config.Minimized
-                local waitDt = (not vis and 0.45) or (Config.Minimized and 0.35) or (lowOverhead and 0.20 or 0.10)
+                local waitDt = (not vis and 0.65) or (Config.Minimized and 0.45) or (lowOverhead and 0.24 or 0.13)
                 t += waitDt
                 if vis then
-                    mainStrokeGrad.Rotation = (mainStrokeGrad.Rotation + (lowOverhead and 10 or 6)) % 360
+                    mainStrokeGrad.Rotation = (mainStrokeGrad.Rotation + (lowOverhead and 10 or 7)) % 360
                     statusLED.BackgroundTransparency = 0.15 + M.abs(M.sin(t * 2.5)) * 0.55
                 end
                 if mainVis and not lowOverhead then
@@ -1310,7 +1310,7 @@ do
         if n:find("quest") or pLow:find("quest") then return "quest" end
         if n:find("daily") or pLow:find("daily") or n:find("streak") or n:find("login") or n:find("calendar") or n:find("dayreward") then return "daily" end
         if n:find("chest") then return "chest" end
-        if n:find("freegift") or n:find("gift") or n:find("playtime") or n:find("time") then return "time" end
+        if n:find("freegift") or n:find("gift") or n:find("playtime") or n:find("timegift") or n:find("timereward") or n:find("freereward") or n:find("time") then return "time" end
         if n:find("reward") or n:find("claim") or n:find("benefit") or gpLow:find("reward") then return "generic" end
         return nil
     end
@@ -1387,9 +1387,14 @@ do
     end
 
     local function seedKnownRewardRemotes(buckets)
+        local knownTimeNames = {
+            "freeGiftClaimRemote", "claimFreeGiftRemote", "claimGiftRemote", "freeGiftsRemote",
+            "freeGiftRemote", "giftClaimRemote", "playtimeRewardRemote", "timeRewardRemote",
+            "claimPlaytimeReward", "claimTimeGift", "claimFreeReward", "freeRewardRemote",
+        }
         for _, rsDir in ipairs(ReplicatedStorage:GetChildren()) do
             if RS_SEED_DIRS[rsDir.Name:lower()] then
-                for _, tName in ipairs({"freeGiftClaimRemote", "claimFreeGiftRemote", "claimGiftRemote", "freeGiftsRemote", "freeGiftRemote", "giftClaimRemote", "playtimeRewardRemote", "timeRewardRemote"}) do
+                for _, tName in ipairs(knownTimeNames) do
                     pushUnique(buckets.tList, rsDir:FindFirstChild(tName), tName == "freeGiftClaimRemote")
                 end
                 pushUnique(buckets.qList, rsDir:FindFirstChild("questsEvent") or rsDir:FindFirstChild("questEvent"), true)
@@ -1406,6 +1411,10 @@ do
                     end
                 end
             end
+        end
+        for _, tName in ipairs({"freeGiftClaimRemote", "claimFreeGiftRemote", "playtimeRewardRemote"}) do
+            local direct = ReplicatedStorage:FindFirstChild(tName, true)
+            if direct then pushUnique(buckets.tList, direct, tName == "freeGiftClaimRemote") end
         end
     end
 
@@ -1541,6 +1550,7 @@ local RewardEngine = {
     dailyPassBusy = false,
     guiCacheDirty = true,
     workingSpinArgs = nil,
+    workingGiftArgs = nil,
     cachedWheelBtn = nil,
     claimedGiftCooldown = {},
     claimedQuestCooldown = {},
@@ -1580,7 +1590,10 @@ do
         local cur = inst
         while cur and cur ~= rootGui and cur ~= game do
             local nl = cur.Name:lower()
-            if nl:find("template") or nl:find("example") or nl:find("sample") or nl:find("prefab") then
+            if nl:find("example") or nl:find("sample") or nl:find("prefab") then
+                return true
+            end
+            if nl:find("template") and ((cur:IsA("GuiObject") and cur.Visible == false) or nl == "template") then
                 return true
             end
             cur = cur.Parent
@@ -1699,7 +1712,7 @@ do
     end
 
     function RewardEngine.fireGuiButton(btn)
-        if not (btn and btn.Parent and btn:IsA("GuiButton") and btn.Active ~= false) then return false end
+        if not (btn and btn.Parent and btn:IsA("GuiButton")) then return false end
         local function fireSig(sig)
             if not sig then return false end
             if type(firesignal) == "function" and pcall(firesignal, sig) then return true end
@@ -1717,6 +1730,10 @@ do
         end
         local fired = fireSig(btn.Activated)
         if fireSig(btn.MouseButton1Click) then fired = true end
+        if not fired then
+            if fireSig(btn.MouseButton1Down) then fired = true end
+            if fireSig(btn.MouseButton1Up) then fired = true end
+        end
         return fired
     end
 
@@ -1736,7 +1753,7 @@ do
             return cachedGuiItems, nil
         end
         local now = M.clock()
-        if not RewardEngine.guiCacheDirty and cachedGuiRoot == pGui and (now - lastGuiIndexBuild < 14.0) then
+        if not RewardEngine.guiCacheDirty and cachedGuiRoot == pGui and (now - lastGuiIndexBuild < 4.5) then
             for i = #cachedGuiItems, 1, -1 do
                 local entry = cachedGuiItems[i]
                 if not (entry.inst and entry.inst.Parent and entry.gui and entry.gui.Parent == pGui) then
@@ -1751,9 +1768,17 @@ do
         local list = {}
         for _, gui in ipairs(pGui:GetChildren()) do
             if gui:IsA("ScreenGui") and not SKIP_GUI_NAMES[gui.Name] and not isOwnGui(gui) then
-                for _, d in ipairs(gui:GetDescendants()) do
-                    if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("ImageButton") then
-                        list[#list + 1] = {inst = d, gui = gui}
+                local gl = gui.Name:lower()
+                if not (gl:find("popup") or gl:find("effect") or gl:find("float") or gl:find("chat") or gl:find("loading")) then
+                    for _, d in ipairs(gui:GetDescendants()) do
+                        if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("ImageButton") then
+                            list[#list + 1] = {inst = d, gui = gui}
+                        elseif d:IsA("ImageLabel") then
+                            local nl = d.Name:lower()
+                            if nl:find("notif") or nl:find("alert") or nl:find("badge") or nl:find("dot") or nl:find("excl") then
+                                list[#list + 1] = {inst = d, gui = gui}
+                            end
+                        end
                     end
                 end
             end
@@ -1762,43 +1787,64 @@ do
         return list, pGui
     end
 
+    local function checkBadgeContainerContext(d, gui, pGui, keywords, excludeKeywords)
+        local cur, matched, excluded = d, false, false
+        for depth = 1, 6 do
+            if not cur or cur == game or cur == pGui then break end
+            local cn = cur.Name:lower()
+            local hasStrongKw = false
+            for _, kw in ipairs(keywords) do
+                if cn:find(kw, 1, true) then matched = true; hasStrongKw = true end
+            end
+            if not matched and depth <= 4 and cur:IsA("GuiObject") then
+                for _, ch in ipairs(cur:GetChildren()) do
+                    if (ch:IsA("TextLabel") or ch:IsA("TextButton")) and ch ~= d and ch.Text and #ch.Text <= 28 then
+                        local tl = cleanGuiText(ch.Text)
+                        for _, kw in ipairs(keywords) do
+                            if tl:find(kw, 1, true) then matched = true; hasStrongKw = true; break end
+                        end
+                        if matched then break end
+                    end
+                end
+            end
+            if excludeKeywords and not hasStrongKw and cur ~= gui then
+                for _, ex in ipairs(excludeKeywords) do
+                    if cn:find(ex, 1, true) then excluded = true; break end
+                end
+                if excluded then break end
+            end
+            if cur == gui then
+                if excludeKeywords then
+                    for _, ex in ipairs({"daily", "quest", "wheel", "spin", "shop", "store", "pet", "egg"}) do
+                        if cn:find(ex, 1, true) then excluded = true; break end
+                    end
+                end
+                break
+            end
+            cur = cur.Parent
+        end
+        return matched and not excluded
+    end
+
     local function hasGuiBadgeFor(keywords, excludeKeywords, allowClaimWord)
         local items, pGui = getCachedGuiTextItems()
         if not pGui then return false, 0 end
         for i = 1, #items do
             local entry = items[i]
             local gui, d = entry.gui, entry.inst
-            if gui.Enabled ~= false and (d:IsA("TextLabel") or (allowClaimWord and d:IsA("TextButton"))) and d.Visible and d.Text and isAncestorVisible(d, gui) then
-                local t = cleanGuiText(d.Text)
-                local num = tonumber(t)
-                local isBadgeText = (t == "!" or (num and num > 0 and num <= 999))
-                    or (allowClaimWord and (t == "claim!" or t == "claim !" or t == "ready!" or t == "ready !"))
-                if isBadgeText then
-                    local cur, matched, excluded = d, false, false
-                    for _ = 1, 6 do
-                        if not cur or cur == game or cur == pGui then break end
-                        local cn = cur.Name:lower()
-                        local hasStrongKw = false
-                        for _, kw in ipairs(keywords) do
-                            if cn:find(kw, 1, true) then matched = true; hasStrongKw = true end
-                        end
-                        if excludeKeywords and not hasStrongKw and cur ~= gui then
-                            for _, ex in ipairs(excludeKeywords) do
-                                if cn:find(ex, 1, true) then excluded = true; break end
-                            end
-                            if excluded then break end
-                        end
-                        if cur == gui then
-                            if excludeKeywords then
-                                for _, ex in ipairs({"daily", "quest", "wheel", "spin", "shop", "store", "pet", "egg"}) do
-                                    if cn:find(ex, 1, true) then excluded = true; break end
-                                end
-                            end
-                            break
-                        end
-                        cur = cur.Parent
+            if gui.Enabled ~= false and d.Visible and isAncestorVisible(d, gui) then
+                if d:IsA("ImageLabel") then
+                    if checkBadgeContainerContext(d, gui, pGui, keywords, excludeKeywords) then
+                        return true, 1
                     end
-                    if matched and not excluded then return true, num or 1 end
+                elseif (d:IsA("TextLabel") or (allowClaimWord and d:IsA("TextButton"))) and d.Text and #d.Text <= 20 then
+                    local t = cleanGuiText(d.Text)
+                    local num = tonumber(t)
+                    local isBadgeText = (t == "!" or (num and num > 0 and num <= 999))
+                        or (allowClaimWord and (t == "claim!" or t == "claim !" or t == "ready!" or t == "ready !"))
+                    if isBadgeText and checkBadgeContainerContext(d, gui, pGui, keywords, excludeKeywords) then
+                        return true, num or 1
+                    end
                 end
             end
         end
@@ -2085,6 +2131,9 @@ do
         if isSingleCardSlotName(nl) then
             return false
         end
+        if inst:FindFirstChildOfClass("UIGridLayout") or inst:FindFirstChildOfClass("UITableLayout") then
+            return true
+        end
         local cardCount, subBtnContainers, directGuiBtns, cardLikeFrames = 0, 0, 0, 0
         for _, ch in ipairs(inst:GetChildren()) do
             local cn = ch.Name:lower()
@@ -2101,7 +2150,7 @@ do
                 end
             elseif ch:IsA("GuiObject") and cn:find("^%d+$") then
                 cardCount += 1
-            elseif ch:IsA("TextLabel") and ch.Text then
+            elseif ch:IsA("TextLabel") and ch.Text and #ch.Text <= 60 then
                 local ct = cleanGuiText(ch.Text)
                 if ct:find("%d+%s*/%s*%d+.*claimed") or ct:find("gifts%s+claimed") or ct:find("get free rewards") then
                     return true
@@ -2110,7 +2159,7 @@ do
                 local hasLbl = ch:FindFirstChildWhichIsA("TextLabel") or ch:FindFirstChildWhichIsA("TextButton")
                 if hasLbl then
                     cardLikeFrames += 1
-                    if cardLikeFrames >= 3 then return true end
+                    if cardLikeFrames >= 2 then return true end
                 end
             end
             if (not ch:IsA("GuiButton")) and ch:FindFirstChildWhichIsA("GuiButton", true) then
@@ -2125,7 +2174,7 @@ do
         local scanScope = d
         for _ = 1, 5 do
             local par = scanScope.Parent
-            if not par or par == gui or par:IsA("ScrollingFrame") or par:FindFirstChildOfClass("UIGridLayout") or isMultiCardContainer(par) then
+            if not par or par == gui or par:IsA("ScrollingFrame") or isMultiCardContainer(par) then
                 break
             end
             if isSingleCardSlotName(scanScope.Name:lower()) and not par:IsA("GuiButton") then
@@ -2168,7 +2217,7 @@ do
         local ancBtn = nil
         local cur = d
         while cur and cur ~= game do
-            if cur:IsA("GuiButton") and cur.Active ~= false then
+            if cur:IsA("GuiButton") then
                 ancBtn = ancBtn or cur
                 local cn = cur.Name:lower()
                 if cn:find("claim") or cn:find("collect") or cn:find("gift") or cn:find("ready") then
@@ -2181,7 +2230,7 @@ do
         if not scanScope then return ancBtn end
         local bestClaimBtn, bestVisBtn, anyBtn = nil, nil, nil
         for _, sub in ipairs(scanScope:GetDescendants()) do
-            if sub:IsA("GuiButton") and sub.Active ~= false then
+            if sub:IsA("GuiButton") then
                 anyBtn = anyBtn or sub
                 local sn = sub.Name:lower()
                 local isClaimBtn = sn:find("claim") ~= nil or sn:find("collect") ~= nil or sn:find("redeem") ~= nil or sn:find("ready") ~= nil
@@ -2200,7 +2249,7 @@ do
     end
 
     local function isCardBlocked(scanScope, btnRef, rejectDailyText)
-        if btnRef and btnRef:IsA("GuiButton") and btnRef.Active == false then
+        if not rejectDailyText and btnRef and btnRef:IsA("GuiButton") and btnRef.Active == false then
             return true
         end
         if scanScope:GetAttribute("Locked") == true or scanScope:GetAttribute("Claimed") == true
@@ -2249,7 +2298,7 @@ do
                     gEx = isExcludedRewardGuiOrAnc(gui, gui, TIME_GIFT_EXCLUDE_KW, true)
                     exclGui[gui] = gEx
                 end
-                if not gEx and (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible ~= false and d.Text and not isTemplateAncestor(d, gui) then
+                if not gEx and (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible ~= false and d.Text and #d.Text <= 28 and not isTemplateAncestor(d, gui) then
                     local tl = trimLow(d.Text)
                     if isClaimWordText(tl) and not tl:find("daily") and not isExcludedRewardGuiOrAnc(d, gui, TIME_GIFT_EXCLUDE_KW, true) then
                         local scanScope = findCardScope(d, gui)
@@ -2266,12 +2315,15 @@ do
                                 end
                                 if not slotNum then
                                     for _, sub in ipairs(scanScope:GetDescendants()) do
-                                        if (sub:IsA("TextLabel") or sub:IsA("TextButton")) and sub.Text then
+                                        if (sub:IsA("TextLabel") or sub:IsA("TextButton")) and sub.Text and #sub.Text <= 32 then
                                             local st = cleanGuiText(sub.Text)
-                                            local gNum = tonumber(st:match("gift%s*#?(%d+)") or st:match("slot%s*#?(%d+)"))
+                                            local gNum = tonumber(st:match("gift%s*#?(%d+)") or st:match("slot%s*#?(%d+)") or st:match("reward%s*#?(%d+)") or st:match("present%s*#?(%d+)") or st:match("^#?(%d+)$"))
                                             if gNum and gNum >= 1 and gNum <= 24 then slotNum = gNum; break end
                                         end
                                     end
+                                end
+                                if not slotNum and scanScope:IsA("GuiObject") and scanScope.LayoutOrder >= 1 and scanScope.LayoutOrder <= 24 then
+                                    slotNum = scanScope.LayoutOrder
                                 end
                                 if slotNum then
                                     readySlots[slotNum] = readySlots[slotNum] or true
@@ -2284,7 +2336,11 @@ do
             end
         end
 
-        local giftBoxNames = {"freeGiftsFolder", "FreeGifts", "timeRewards", "TimeRewards", "Gifts", "playtimeRewards"}
+        local giftBoxNames = {
+            "freeGiftsFolder", "FreeGiftsFolder", "FreeGifts", "freeGifts",
+            "timeRewards", "TimeRewards", "PlaytimeRewards", "playtimeRewards",
+            "PlaytimeGifts", "playtimeGifts", "Gifts", "gifts", "TimeGifts", "timeGifts",
+        }
         for _, root in ipairs(getExpandedPlayerRoots()) do
             for _, fName in ipairs(giftBoxNames) do
                 local folder = root:FindFirstChild(fName)
@@ -2295,6 +2351,15 @@ do
                             if num and num >= 1 and num <= 24 then readySlots[num] = item end
                         end
                     end
+                end
+            end
+        end
+        for ak, av in pairs(Player:GetAttributes()) do
+            if av == true then
+                local al = tostring(ak):lower()
+                if (al:find("gift") or al:find("playtime")) and (al:find("ready") or al:find("avail") or al:find("unlock")) then
+                    local num = tonumber(al:match("(%d+)"))
+                    if num and num >= 1 and num <= 24 then readySlots[num] = readySlots[num] or true end
                 end
             end
         end
@@ -2672,23 +2737,88 @@ do
     local function buildGiftAttempts(slotIdx, slotRef)
         local sStr = tostring(slotIdx)
         local gStr = "Gift " .. sStr
+        local gNoSp = "Gift" .. sStr
         local gLow = "gift" .. sStr
         local attempts = {
             {"claimGift", slotIdx},
-            {"claimGift", sStr},
+            {"claimGift", gNoSp},
             {"claimGift", gStr},
             {"claimGift", gLow},
+            {"claimGift", sStr},
             {slotIdx},
+            {gNoSp},
             {gStr},
             {"claimFreeGift", slotIdx},
+            {"claimFreeGift", gNoSp},
             {"claimFreeGift", gStr},
             {"claimTimeGift", slotIdx},
+            {"claimPlaytimeReward", slotIdx},
+            {"claimReward", slotIdx},
             {"claim", slotIdx},
+            {"Claim", slotIdx},
         }
         if typeof(slotRef) == "Instance" then
             table.insert(attempts, 3, {"claimGift", slotRef})
         end
+        if type(RewardEngine.workingGiftArgs) == "function" then
+            local cachedArgs = RewardEngine.workingGiftArgs(slotIdx, slotRef)
+            if cachedArgs then table.insert(attempts, 1, cachedArgs) end
+        end
         return attempts
+    end
+
+    local function cacheGiftPayloadPattern(args, slotIdx, slotRef)
+        if type(args) ~= "table" then return end
+        local sStr = tostring(slotIdx)
+        local gStr = "Gift " .. sStr
+        local gNoSp = "Gift" .. sStr
+        local gLow = "gift" .. sStr
+        local template = {}
+        for i = 1, #args do
+            local v = args[i]
+            if v == slotIdx then template[i] = "_NUM"
+            elseif v == sStr then template[i] = "_STR"
+            elseif v == gStr then template[i] = "_GSP"
+            elseif v == gNoSp then template[i] = "_GNOSP"
+            elseif v == gLow then template[i] = "_GLOW"
+            elseif typeof(slotRef) == "Instance" and v == slotRef then template[i] = "_INST"
+            else template[i] = v end
+        end
+        RewardEngine.workingGiftArgs = function(idx, ref)
+            local si = tostring(idx)
+            local out = {}
+            for i = 1, #template do
+                local t = template[i]
+                if t == "_NUM" then out[i] = idx
+                elseif t == "_STR" then out[i] = si
+                elseif t == "_GSP" then out[i] = "Gift " .. si
+                elseif t == "_GNOSP" then out[i] = "Gift" .. si
+                elseif t == "_GLOW" then out[i] = "gift" .. si
+                elseif t == "_INST" then out[i] = (typeof(ref) == "Instance") and ref or ("Gift" .. si)
+                else out[i] = t end
+            end
+            return out
+        end
+    end
+
+    local function hasTimeGiftCardsOpen()
+        local items, pGui = getCachedGuiTextItems()
+        if not pGui then return false end
+        local timerOrGiftHits = 0
+        for i = 1, #items do
+            local entry = items[i]
+            local gui, d = entry.gui, entry.inst
+            if gui.Enabled ~= false and (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Visible ~= false and d.Text and not isExcludedRewardGuiOrAnc(gui, gui, TIME_GIFT_EXCLUDE_KW, true) then
+                local tl = trimLow(d.Text)
+                if tl:find("gift%s*%d+") or tl:match("%d+:%d%d:%d%d") or tl:find("free rewards for playing") then
+                    if isAncestorVisible(d, gui) then
+                        timerOrGiftHits += 1
+                        if timerOrGiftHits >= 2 then return true end
+                    end
+                end
+            end
+        end
+        return false
     end
 
     local function hasTimeGiftBadge()
@@ -2705,9 +2835,11 @@ do
         local myGen, tok = Runtime.Gen, Runtime.SessionTokens.rew
         local giftRemotes = Remotes.timeRewardRemotes
         if #giftRemotes == 0 then
-            local directFreeGift = ReplicatedStorage:FindFirstChild("freeGiftClaimRemote", true)
-            if directFreeGift and (directFreeGift:IsA("RemoteEvent") or directFreeGift:IsA("RemoteFunction")) then
-                giftRemotes = {cloneref(directFreeGift)}
+            for _, tName in ipairs({"freeGiftClaimRemote", "claimFreeGiftRemote", "playtimeRewardRemote"}) do
+                local directFreeGift = ReplicatedStorage:FindFirstChild(tName, true)
+                if directFreeGift and (directFreeGift:IsA("RemoteEvent") or directFreeGift:IsA("RemoteFunction")) then
+                    giftRemotes[#giftRemotes + 1] = cloneref(directFreeGift)
+                end
             end
         end
 
@@ -2739,8 +2871,13 @@ do
                                 for _, args in ipairs(attempts) do
                                     if not isAlive() then break end
                                     local ok, res = invokeSafe(rem, args)
-                                    if isClaimSuccess(ok, res) then claimedOk = true; break
-                                    elseif ok and res == nil then usedEvent = true end
+                                    if isClaimSuccess(ok, res) then
+                                        claimedOk = true
+                                        cacheGiftPayloadPattern(args, slotIdx, slotRef)
+                                        break
+                                    elseif ok and res == nil then
+                                        usedEvent = true
+                                    end
                                 end
                                 if claimedOk then break end
                             else
@@ -2778,9 +2915,9 @@ do
                 end
                 if myGen == Runtime.Gen and tok == Runtime.SessionTokens.rew then RewardEngine.giftPassBusy = false end
             end)
-        elseif hasClaimBadge and #giftRemotes > 0 then
+        elseif hasClaimBadge and #giftRemotes > 0 and not hasTimeGiftCardsOpen() then
             local badgeSlots = {}
-            for slotIdx = 1, 8 do
+            for slotIdx = 1, 12 do
                 local lastTry = RewardEngine.claimedGiftCooldown[slotIdx] or 0
                 if now - lastTry >= 5.0 then
                     RewardEngine.claimedGiftCooldown[slotIdx] = now
@@ -2809,6 +2946,7 @@ do
                                         claimedCountThisPass += 1
                                         RewardEngine.collectedCount += 1
                                         RewardEngine.lastRewardLabel = "Time Gift #" .. tostring(slotIdx)
+                                        cacheGiftPayloadPattern(args, slotIdx, nil)
                                         claimedSlot = true
                                         break
                                     elseif ok and res == nil then
@@ -3247,7 +3385,7 @@ local BossEngine = {
     trackedDangerInsts = setmetatable({}, {__mode = "k"}),
     spawnedPartTimes = setmetatable({}, {__mode = "k"}),
     watchCache = setmetatable({}, {__mode = "k"}),
-    lastSafeDist = 290,
+    lastSafeDist = 380,
     lastAtkImpact = nil,
     seqStart = nil,
     seqTotal = nil,
@@ -3260,8 +3398,6 @@ local BossEngine = {
     bossCfgCheckedAt = -100,
     bossCfgMap = {},
     statusText = "Action: Inactive",
-    despawnText = "--",
-    nextSpawnText = "--",
     currentBossModel = nil,
     currentBossHum = nil,
     currentTargetObj = nil,
@@ -3278,13 +3414,12 @@ local BossEngine = {
     countedDead = setmetatable({}, {__mode = "k"}),
     lastAttackSeq = nil,
     lastAoeCheck = -100,
-    lastTimerScan = -100,
-    cachedTimerObjs = {},
     cachedTopOffset = setmetatable({}, {__mode = "k"}),
     lastSafeSpot = nil,
     lastHoverCF = nil,
     noClipBackup = setmetatable({}, {__mode = "k"}),
     noClipChar = nil,
+    noClipConn = nil,
     OPTIONS = {
         {label = "Common Boss",        keys = {"common"}},
         {label = "Rare Boss",          keys = {"rare"}},
@@ -3292,7 +3427,7 @@ local BossEngine = {
         {label = "Legendary Boss",     keys = {"legendary", "%f[%a]legend%f[%A]"}},
         {label = "Mythic Boss",        keys = {"mythic", "mythical"}},
         {label = "Rainbow/Admin Boss", keys = {"rainbow", "admin", "rgb", "chroma"}},
-        {label = "Alien Boss (Event)", keys = {"alien", "event", "ufo", "space", "galaxy", "cosmic", "xeno", "martian", "invader", "nebula", "cyborg", "astro"}},
+        {label = "Alien Boss (Event)", keys = {"alien", "ufo", "space", "galaxy", "cosmic", "xeno", "martian", "invader", "nebula", "cyborg", "astro", "eventboss", "event boss"}},
         {label = "All Bosses (Auto)",  keys = {"*"}},
     },
 }
@@ -3302,11 +3437,11 @@ do
     pcall(function() CollectionService = SafeService("CollectionService") end)
 
     local BOSS_TITLE_KW = {"boss", "golem", "overlord", "colossus"}
-    local EVENT_BOSS_KW = {"alien", "event", "ufo", "space", "galaxy", "cosmic", "xeno", "martian", "invader", "nebula", "cyborg", "astro"}
+    local EVENT_BOSS_KW = {"alien", "ufo", "space", "galaxy", "cosmic", "xeno", "martian", "invader", "nebula", "cyborg", "astro", "eventboss", "event boss"}
     local EXPLICIT_TIER_KW = {"common", "rare", "epic", "legendary", "mythic", "mythical", "rainbow", "admin"}
     local BOSS_TIER_KW = {
         "common", "rare", "epic", "legendary", "mythic", "mythical", "rainbow", "admin",
-        "alien", "event", "ufo", "cosmic", "galaxy", "xeno", "martian", "invader", "nebula", "cyborg", "astro",
+        "alien", "ufo", "cosmic", "galaxy", "xeno", "martian", "invader", "nebula", "cyborg", "astro", "eventboss",
         "titan", "champion", "guardian", "omega", "supreme", "mutant"
     }
     local PET_SKIP_KW = {"%f[%a]pet%f[%A]", "%f[%a]pets%f[%A]", "evolved", "follower", "companion", "%f[%a]egg%f[%A]"}
@@ -3314,9 +3449,9 @@ do
         "spawner", "refresh", "viewreward", "rewards", "button", "prompt",
         "sign", "board", "screen", "monitor", "pillar", "stair", "platform", "stage",
         "lobby", "pedestal", "teleporter", "leaderboard", "statue", "captain",
-        "shopkeeper", "%f[%a]shop%f[%A]", "%f[%a]store%f[%A]", "vendor", "merchant", "seller", "dealer",
+        "shopkeeper", "shop", "store", "vendor", "merchant", "seller", "dealer",
         "quest", "trainer", "guide", "giver", "portal", "teleport", "%f[%a]door%f[%A]", "%f[%a]gate%f[%A]",
-        "chest", "wheel", "booth", "punchingbag"
+        "chest", "wheel", "booth", "punchingbag", "npc", "arena", "baseplate", "stand", "dummy", "display"
     }
     local SCENERY_ONLY_SKIP_KW = {
         "%f[%a]rock%f[%A]", "%f[%a]rocks%f[%A]", "boulder", "machine", "bench", "squat",
@@ -3396,7 +3531,6 @@ do
     local cachedBodyStats = setmetatable({}, {__mode = "k"})
     local cachedExtMeta, lastExtMetaScan = "", -100
     local cachedGuiBarLbl, lastGuiBarScan, cachedGuiBarHp, cachedGuiBarMax, cachedGuiBarWantEv = nil, -100, 0, 0, nil
-    local cachedTimerDespawn, cachedTimerNext, lastGuiTimerScan = nil, nil, -100
 
     local HP_SUFFIX = {k = 1e3, m = 1e6, b = 1e9, t = 1e12, qa = 1e15, qi = 1e18, sx = 1e21, sp = 1e24, oc = 1e27, no = 1e30, dc = 1e33}
     local function parseCompactNum(str)
@@ -3456,7 +3590,7 @@ do
                 return true
             end
             local cn = cur.Name:lower()
-            if cn:find("refresh") or cn:find("viewreward") or cn:find("button") or cn:find("sign") or cn:find("board") or cn:find("prompt") then
+            if cn:find("refresh") or cn:find("viewreward") or cn:find("button") or cn:find("sign") or (cn:find("board") and not cur:IsA("BillboardGui") and not cn:find("billboard")) or cn:find("prompt") then
                 return true
             end
             cur = cur.Parent
@@ -3513,24 +3647,37 @@ do
         return okA and hasA == true
     end
 
+    local function hasAlienBossTag(model)
+        if not (CollectionService and model) then return false end
+        local okA, hasA = pcall(CollectionService.HasTag, CollectionService, model, "AlienBoss")
+        return okA and hasA == true
+    end
+
+    local function isGenericOrPropModel(model)
+        if not model then return true end
+        local nl = model.Name:lower()
+        if nl == "model" or nl == "part" or nl == "folder" or nl == "map" or nl == "base" then
+            return true
+        end
+        if hasPatternKw(nl, STRICT_PROP_SKIP_KW) and not hasKw(nl, BOSS_TITLE_KW) then
+            return true
+        end
+        return false
+    end
+
     local function isRealBossEventModel(model)
         if not model then return false end
         if hasBossEventTag(model) or model:FindFirstChild("BossDamageHitbox") ~= nil or getBossEventModelMeta(model.Name) ~= nil then
             return true
         end
-        local p = model.Parent
-        if p and p ~= workspace then
-            local pl = p.Name:lower()
-            if pl == "bossevent" or pl == "bossarena" or pl == "alienboss" then return true end
-            local gp = p.Parent
-            if gp and gp ~= workspace and gp.Name:lower() == "events" then return true end
+        if isGenericOrPropModel(model) or EXACT_SKIP_MODELS[model.Name:lower()] then
+            return false
         end
-        local nl = model.Name:lower()
-        if not EXACT_SKIP_MODELS[nl] and not hasPatternKw(nl, STRICT_PROP_SKIP_KW) then
-            if model:FindFirstChildOfClass("Humanoid") or model:FindFirstChildOfClass("AnimationController")
-                or model:FindFirstChild("stats") or model:FindFirstChild("Stats") or model:GetAttribute("Health") ~= nil then
-                if model:FindFirstChild("BossDamageHitbox", true) ~= nil then return true end
-            end
+        local hasRig = (model:FindFirstChildOfClass("Humanoid") ~= nil)
+            or (model:FindFirstChildOfClass("AnimationController") ~= nil)
+            or hasLimbAnatomy(model)
+        if hasRig and model:FindFirstChild("BossDamageHitbox", true) ~= nil then
+            return true
         end
         return false
     end
@@ -3548,22 +3695,23 @@ do
 
         local nLow = obj.Name:lower()
         local hasEventTag = hasBossEventTag(obj)
+        local hasDirectHitbox = (obj:FindFirstChild("BossDamageHitbox") ~= nil)
         if EXACT_SKIP_MODELS[nLow] and not hasEventTag and obj:GetAttribute("IsBoss") ~= true and obj:GetAttribute("Boss") ~= true then
             excludedModelCache[obj] = true
             return true
         end
-        if hasPatternKw(nLow, STRICT_PROP_SKIP_KW) and not hasEventTag and obj:FindFirstChild("BossDamageHitbox") == nil then
+        if isGenericOrPropModel(obj) and not hasEventTag and not hasDirectHitbox then
             excludedModelCache[obj] = true
             return true
         end
 
         local inBossArena = hasArenaOrBossAncestor(obj)
-        local isRealEventBoss = hasEventTag or (obj:FindFirstChild("BossDamageHitbox") ~= nil)
+        local isRealEventBoss = hasEventTag or hasDirectHitbox
             or (inBossArena and obj:FindFirstChild("BossDamageHitbox", true) ~= nil)
         local isExplicitBossAttr = isRealEventBoss or (obj:GetAttribute("IsBoss") == true) or (obj:GetAttribute("Boss") == true)
         local ownTitleBoss = hasKw(nLow, BOSS_TITLE_KW) or hasKw(nLow, EVENT_BOSS_KW) or isExplicitBossAttr
 
-        if (nLow:find("arena", 1, true) or nLow:find("gym", 1, true)) and not ownTitleBoss then
+        if (nLow:find("arena", 1, true) or nLow:find("gym", 1, true)) and not (hasEventTag or hasDirectHitbox or hasKw(nLow, BOSS_TITLE_KW)) then
             excludedModelCache[obj] = true
             return true
         end
@@ -3573,12 +3721,17 @@ do
         end
 
         inBossArena = inBossArena or isRealEventBoss
-        local hasCreatureRig = isRealEventBoss
+        local hasCreatureRig = hasEventTag or hasDirectHitbox
             or (obj:FindFirstChildOfClass("Humanoid") ~= nil)
             or (obj:FindFirstChildOfClass("AnimationController") ~= nil)
             or (obj:FindFirstChildWhichIsA("Humanoid", true) ~= nil)
             or (obj:FindFirstChildWhichIsA("AnimationController", true) ~= nil)
             or hasLimbAnatomy(obj)
+
+        if not hasCreatureRig then
+            excludedModelCache[obj] = true
+            return true
+        end
 
         if hasPatternKw(nLow, SCENERY_ONLY_SKIP_KW) and not (ownTitleBoss or (inBossArena and hasCreatureRig)) then
             excludedModelCache[obj] = true
@@ -4032,10 +4185,12 @@ do
 
         local inArena, arenaCont, ancEvent = hasArenaOrBossAncestor(model)
         local nl = model.Name:lower()
-        local isBossCandidateRig = inArena or isRealBossEventModel(model) or hasKw(nl, BOSS_TITLE_KW) or hasKw(nl, EVENT_BOSS_KW)
-            or (hum ~= nil) or (model:FindFirstChildWhichIsA("AnimationController", true) ~= nil)
+        local hasOwnRig = (model:FindFirstChild("BossDamageHitbox", true) ~= nil)
+            or hasBossEventTag(model)
+            or ((hum ~= nil or model:FindFirstChildWhichIsA("AnimationController", true) ~= nil) and hasLimbAnatomy(model) and not isGenericOrPropModel(model))
+        local isBossCandidateRig = hasOwnRig and (inArena or isRealBossEventModel(model) or hasKw(nl, BOSS_TITLE_KW) or hasKw(nl, EVENT_BOSS_KW))
         if isBossCandidateRig then
-            local wantEv = ancEvent or hasKw(nl, EVENT_BOSS_KW)
+            local wantEv = ancEvent or hasAlienBossTag(model) or hasKw(nl, EVENT_BOSS_KW)
             local ehv, emx = readExternalArenaHp(arenaCont, wantEv and true or nil)
             if emx > 0 and (not hum or emx > hum.MaxHealth) then
                 return hum, ehv, emx, false
@@ -4046,7 +4201,7 @@ do
             return hum, hum.Health, hum.MaxHealth, false
         end
 
-        if hasActiveBossRigSignal(model, bodyStats or getModelBodyStats(model), hum) then
+        if hasOwnRig and hasActiveBossRigSignal(model, bodyStats or getModelBodyStats(model), hum) then
             return hum, 1, 1, true
         end
 
@@ -4060,23 +4215,25 @@ do
 
         for _, d in ipairs(model:GetDescendants()) do
             if d:IsA("UIGradient") then rainbowSignal = true end
-            if d:IsA("BasePart") and d.Transparency < 0.88 and d.Name ~= "HumanoidRootPart" then
+            if d:IsA("BasePart") and (tonumber(d.Transparency) or 0) < 0.88 and d.Name ~= "HumanoidRootPart" then
                 local c = d.Color
-                local h, s, v = c:ToHSV()
-                local weight = (d.Material == Enum.Material.Neon) and 4 or 1
-                if s >= 0.25 and v >= 0.16 then
-                    totalScore += weight
-                    if d.Material == Enum.Material.Neon or s >= 0.45 then
-                        hueBuckets[M.floor(h * 10)] = true
+                if c and c.ToHSV then
+                    local h, s, v = c:ToHSV()
+                    local weight = (d.Material == Enum.Material.Neon) and 4 or 1
+                    if s >= 0.25 and v >= 0.16 then
+                        totalScore += weight
+                        if d.Material == Enum.Material.Neon or s >= 0.45 then
+                            hueBuckets[M.floor(h * 10)] = true
+                        end
+                        if h <= 0.045 or h >= 0.91 then neonScore.mythic += weight
+                        elseif h <= 0.20 then neonScore.legendary += weight
+                        elseif h <= 0.44 then neonScore.common += weight
+                        elseif h <= 0.72 then neonScore.rare += weight
+                        else neonScore.epic += weight end
+                    elseif v >= 0.28 then
+                        totalScore += 0.35
+                        neonScore.common += 0.35
                     end
-                    if h <= 0.045 or h >= 0.91 then neonScore.mythic += weight
-                    elseif h <= 0.20 then neonScore.legendary += weight
-                    elseif h <= 0.44 then neonScore.common += weight
-                    elseif h <= 0.72 then neonScore.rare += weight
-                    else neonScore.epic += weight end
-                elseif v >= 0.28 then
-                    totalScore += 0.35
-                    neonScore.common += 0.35
                 end
             end
         end
@@ -4153,18 +4310,6 @@ do
         return nil
     end
 
-    local function hasNearbyEventContext(model)
-        local parentCont = model.Parent
-        if parentCont and parentCont ~= workspace then
-            for _, ch in ipairs(parentCont:GetChildren()) do
-                if ch ~= model and hasKw(ch.Name:lower(), EVENT_BOSS_KW) then
-                    return true
-                end
-            end
-        end
-        return false
-    end
-
     local function buildBossSearchTag(model, hum)
         local now = M.clock()
         local cached = cachedBossTags[model]
@@ -4181,16 +4326,17 @@ do
             local pLow = p.Name:lower()
             if hasKw(pLow, EVENT_BOSS_KW) then ancEvent = true end
             if pLow:find("arena", 1, true) or hasKw(pLow, BOSS_FOLDER_KW) then ancBossCont = true end
-            if pLow ~= "map" and pLow ~= "world" and pLow ~= "arenas" and pLow ~= "gyms" and pLow ~= "gymsfolder" then
+            if pLow ~= "map" and pLow ~= "world" and pLow ~= "arenas" and pLow ~= "gyms" and pLow ~= "gymsfolder" and pLow ~= "events" then
                 parts[#parts + 1] = pLow
             end
             p = p.Parent
         end
-        if hum and hum.DisplayName and hum.DisplayName ~= "" then
-            parts[#parts + 1] = hum.DisplayName:lower()
-        end
         local cfgMeta = getBossEventModelMeta(model.Name)
         pcall(function()
+            local dn = hum and hum.DisplayName
+            if type(dn) == "string" and dn ~= "" then
+                parts[#parts + 1] = dn:lower()
+            end
             for ak, av in pairs(model:GetAttributes()) do
                 local akl = tostring(ak):lower()
                 if type(av) == "string" and av ~= "" then
@@ -4203,7 +4349,7 @@ do
                 end
             end
             local ownTagSoFar = table.concat(parts, " | ")
-            local isEvModel = ancEvent or hasBossEventTag(model) and hasKw(ownTagSoFar, EVENT_BOSS_KW) or hasKw(ownTagSoFar, EVENT_BOSS_KW)
+            local isEvModel = ancEvent or hasAlienBossTag(model) or hasKw(ownTagSoFar, EVENT_BOSS_KW)
             if not isEvModel and not hasKw(ownTagSoFar, EXPLICIT_TIER_KW) then
                 local wsRarIdx = tonumber(workspace:GetAttribute("BossRarityIndex"))
                 local wsDisp = workspace:GetAttribute("BossDisplayName")
@@ -4248,7 +4394,7 @@ do
         end
 
         local baseTag = table.concat(parts, " | ")
-        local isEvent = ancEvent or hasBossEventTag(model) or hasKw(baseTag, EVENT_BOSS_KW) or hasNearbyEventContext(model)
+        local isEvent = ancEvent or hasAlienBossTag(model) or hasKw(baseTag, EVENT_BOSS_KW)
 
         if isEvent then
             if not baseTag:find("alien", 1, true) then
@@ -4272,6 +4418,9 @@ do
 
     local function isConfirmedBossModel(model, hum, maxHp, hrp, tag, hasFractionBar, inBossCont, bodyStats)
         if not (bodyStats and bodyStats.valid) then return false end
+        if isGenericOrPropModel(model) and not hasBossEventTag(model) and model:FindFirstChild("BossDamageHitbox") == nil then
+            return false
+        end
         local hasDamageHitbox = (model:FindFirstChild("BossDamageHitbox", true) ~= nil)
         if (hasDamageHitbox or hasBossEventTag(model)) and maxHp > 0 then
             return true
@@ -4280,7 +4429,7 @@ do
             or (model:FindFirstChildWhichIsA("AnimationController", true) ~= nil)
             or hasLimbAnatomy(model)
             or hasDamageHitbox
-        if not hasCreatureRig and bodyStats.height < 5.5 then
+        if not hasCreatureRig then
             return false
         end
         if hasKw(tag, BOSS_TITLE_KW) then return true end
@@ -4349,15 +4498,13 @@ do
     local function modelHasHpSignal(model)
         if not (model and model:IsA("Model")) then return false end
         if isRealBossEventModel(model) then return true end
-        local nl = model.Name:lower()
-        if hasPatternKw(nl, STRICT_PROP_SKIP_KW) then return false end
+        if isGenericOrPropModel(model) then return false end
         if model:FindFirstChildOfClass("Humanoid") or model:FindFirstChildWhichIsA("Humanoid", true) or model:FindFirstChildWhichIsA("AnimationController", true) then
             return true
         end
-        if hasKw(nl, BOSS_TITLE_KW) or hasKw(nl, EVENT_BOSS_KW) then return true end
-        if model:GetAttribute("IsBoss") ~= nil or model:GetAttribute("Boss") ~= nil or model:GetAttribute("Health") ~= nil or model:GetAttribute("HP") ~= nil then
-            return true
-        end
+        local nl = model.Name:lower()
+        if (hasKw(nl, BOSS_TITLE_KW) or hasKw(nl, EVENT_BOSS_KW)) and hasLimbAnatomy(model) then return true end
+        if model:GetAttribute("IsBoss") == true or model:GetAttribute("Boss") == true then return true end
         local statsFolder = model:FindFirstChild("stats") or model:FindFirstChild("Stats")
         if statsFolder then
             for _, sv in ipairs(statsFolder:GetChildren()) do
@@ -4365,14 +4512,9 @@ do
             end
             if statsFolder:GetAttribute("Health") ~= nil or statsFolder:GetAttribute("MaxHealth") ~= nil then return true end
         end
-        if hasArenaOrBossAncestor(model) and tonumber(workspace:GetAttribute("BossHealth")) ~= nil then
-            return true
-        end
         if hasLimbAnatomy(model) then return true end
         for _, d in ipairs(model:GetChildren()) do
             if d:IsA("ValueBase") and (HP_CUR_NAMES[d.Name:lower()] or HP_MAX_NAMES[d.Name:lower()]) then return true end
-            if d:IsA("BillboardGui") then return true end
-            if d:IsA("BasePart") and (d:FindFirstChildOfClass("BillboardGui") ~= nil) then return true end
         end
         return false
     end
@@ -4469,7 +4611,7 @@ do
     end
 
     function Combat.stepKinematics(dt)
-        local isPunching = Config.Active and (Config.AutoPunch or Config.FastPunch or Config.AutoKillBoss)
+        local isPunching = Config.Active and (Config.AutoPunch or Config.AutoKillBoss)
         local char = Player.Character
         if not isPunching or not char then
             if Combat.swingProgress < 1 then Combat.restoreJoints() end
@@ -4480,8 +4622,10 @@ do
         cacheCharJoints(char)
         if next(Combat.joints) == nil then return end
 
-        local spd = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(tonumber(Config.PunchSpeed) or 140, 60, 500) or 35
-        local swingsPerSec = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(8 + (spd / 40), 10, 18) or 4.5
+        local pSpd = M.clamp(tonumber(Config.PunchSpeed) or 60, 1, 500)
+        local isFast = Config.AutoKillBoss or pSpd > 80
+        local spd = Config.AutoKillBoss and M.max(pSpd, 140) or pSpd
+        local swingsPerSec = isFast and M.clamp(6 + (spd / 45), 7, 16) or 4.5
         if Combat.swingProgress < 1 then Combat.swingProgress = M.min(1, Combat.swingProgress + dt * swingsPerSec) end
 
         local pulse = M.sin(M.pi * Combat.swingProgress)
@@ -4511,7 +4655,8 @@ do
     local lastAnimPlay = 0
     local function triggerVisualSwing(char, hum, tool, speedVal)
         local now = M.clock()
-        local swingsPerSec = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(5 + ((speedVal or 140) / 100), 6, 10) or 4.5
+        local isFast = Config.AutoKillBoss or (speedVal and speedVal > 80)
+        local swingsPerSec = isFast and M.clamp(5 + ((speedVal or 140) / 100), 6, 10) or 4.5
         if now - Combat.lastTrackTrigger < (1 / swingsPerSec) then return end
         Combat.lastTrackTrigger = now
         Combat.activeArm = -Combat.activeArm
@@ -4524,7 +4669,7 @@ do
             Combat.trackIdx = (Combat.trackIdx % #Combat.tracks) + 1
             if tr and not tr.IsPlaying then
                 pcall(function()
-                    local animSpeed = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(swingsPerSec * 0.28, 1.5, 2.8) or 1.5
+                    local animSpeed = isFast and M.clamp(swingsPerSec * 0.28, 1.5, 2.8) or 1.5
                     tr:Play(0.05, 1, animSpeed)
                 end)
             end
@@ -4568,16 +4713,17 @@ do
 
     function Combat.refreshTargets(rootPos, force)
         local now = M.clock()
-        local scanMinInt = Config.AutoKillBoss and 0.65 or ((Config.FastPunch or Config.AutoPunch) and 1.25 or 2.2)
+        local scanMinInt = Config.AutoKillBoss and 0.85 or (Config.AutoPunch and 1.25 or 2.5)
         if not force and (now - Combat.lastTargetScan < scanMinInt) then return end
         Combat.lastTargetScan = now
 
         scanFastRealBossSources()
 
-        local deepInt = Config.AutoKillBoss and ((#Combat.bossTargets == 0) and 3.0 or 10.0) or ((Config.FastPunch or Config.AutoPunch) and 8.0 or 12.0)
+        local hasLockedBoss = (Config.AutoKillBoss and BossEngine.currentBossModel ~= nil and BossEngine.currentBossModel.Parent ~= nil)
+        local deepInt = Config.AutoKillBoss and (hasLockedBoss and 14.0 or ((#Combat.bossTargets == 0) and 3.5 or 10.0)) or (Config.AutoPunch and 8.0 or 12.0)
         local needDeep = force or (now - Combat.lastDeepScan >= deepInt)
         local skipRocks = (Config.AutoKillBoss == true)
-        local skipBossWalk = (not Config.AutoKillBoss and (Config.FastPunch or Config.AutoPunch) and not force)
+        local skipBossWalk = (not Config.AutoKillBoss and Config.AutoPunch and not force)
         local newRocks = (needDeep and not skipRocks) and {} or Combat.rockTargets
 
         if needDeep then
@@ -4760,7 +4906,7 @@ do
             end
         end
         if not skipAnim then
-            triggerVisualSwing(char, hum, tool, (focusBoss or Config.FastPunch) and M.max(tonumber(Config.PunchSpeed) or 140, focusBoss and 160 or 60) or 40)
+            triggerVisualSwing(char, hum, tool, focusBoss and M.max(tonumber(Config.PunchSpeed) or 140, 160) or (tonumber(Config.PunchSpeed) or 60))
         end
 
         local dualRealBoss = focusBoss and focusBoss.hasDamageHitbox == true
@@ -4809,8 +4955,13 @@ do
             if hitter and hitter:IsA("BasePart") then
                 local bObj = focusBoss or Combat.bossTargets[1]
                 local bInReach = false
-                if bObj and bObj.part and bObj.part.Parent then
-                    bInReach = ((bObj.part.Position - root.Position).Magnitude <= (focusBoss and 38 or 35))
+                if bObj and bObj.model and bObj.model.Parent then
+                    local reachLim = focusBoss and M.max(58, (bObj.bodyStats and bObj.bodyStats.maxSpan or 25) + 30) or 35
+                    if bObj.head and bObj.head.Parent and (bObj.head.Position - root.Position).Magnitude <= reachLim then
+                        bInReach = true
+                    elseif bObj.part and bObj.part.Parent and (bObj.part.Position - root.Position).Magnitude <= reachLim then
+                        bInReach = true
+                    end
                 end
                 if bInReach and bObj and bObj.model and bObj.model.Parent then
                     local _, curHP = readBossHealth(bObj.model, bObj.bodyStats)
@@ -4818,7 +4969,7 @@ do
                         local hitParts = bObj.hitParts
                         local pCount = #hitParts
                         if pCount > 0 then
-                            local maxHits = focusBoss and M.min(pCount, 2) or 1
+                            local maxHits = focusBoss and M.min(pCount, 3) or 1
                             for b = 1, maxHits do
                                 local tgt = hitParts[((b - 1) % pCount) + 1]
                                 if tgt and tgt.Parent then
@@ -4887,226 +5038,15 @@ do
         BossEngine.prevEngagedHP = nil
     end
 
-    local function fmtClockToken(rawSec)
-        local s = M.max(0, M.floor(tonumber(rawSec) or 0))
-        local h = M.floor(s / 3600)
-        local m = M.floor((s % 3600) / 60)
-        local sec = s % 60
-        if h > 0 then return M.fmtStr("%d:%02d:%02d", h, m, sec) end
-        return M.fmtStr("%02d:%02d", m, sec)
-    end
-
-    local function extractTimerFromText(txt)
-        if not txt or txt == "" then return nil end
-        local h, m, s = txt:match("(%d+):(%d+):(%d+)")
-        if h and m and s then return M.fmtStr("%d:%02d:%02d", tonumber(h), tonumber(m), tonumber(s)) end
-        local mm, ss = txt:match("(%d+):(%d+)")
-        if mm and ss then return M.fmtStr("%02d:%02d", tonumber(mm), tonumber(ss)) end
-        local secOnly = txt:match("(%d+)%s*[sS]%f[%A]")
-        if secOnly then return fmtClockToken(tonumber(secOnly)) end
-        return nil
-    end
-
-    local function parseTimerValue(val)
-        local n = tonumber(val)
-        if n then
-            if n > 1e8 then n = M.max(0, n - os.time()) end
-            if n >= 0 and n <= 86400 then return fmtClockToken(n) end
-        elseif type(val) == "string" then
-            return extractTimerFromText(val)
-        end
-        return nil
-    end
-
-    local function extractDespawnAndNextFromText(rawTxt)
-        if not rawTxt or rawTxt == "" then return nil, nil end
-        local plain = rawTxt:gsub("<[^>]+>", " "):gsub("%s+", " ")
-        local low = plain:lower()
-        local dFound, nFound = nil, nil
-        local hasDespawnKw = (low:find("despawn") or low:find("leaves in") or low:find("boss leaves") or low:find("disappear") or low:find("time left")) ~= nil
-        local hasNextKw = (low:find("next boss") or low:find("spawn in") or low:find("spawning") or low:find("next spawn") or low:find("boss spawn") or low:find("respawn")) ~= nil
-        if hasDespawnKw then
-            local sub = low:match("despawn[^%d]*(%d+:%d+:%d+)") or low:match("despawn[^%d]*(%d+:%d+)")
-                or low:match("leaves[^%d]*(%d+:%d+:%d+)") or low:match("leaves[^%d]*(%d+:%d+)")
-                or low:match("left[^%d]*(%d+:%d+:%d+)") or low:match("left[^%d]*(%d+:%d+)")
-            dFound = extractTimerFromText(sub or (not hasNextKw and plain or ""))
-        end
-        if hasNextKw then
-            local sub = low:match("next[^%d]*(%d+:%d+:%d+)") or low:match("next[^%d]*(%d+:%d+)")
-                or low:match("spawn[^%d]*(%d+:%d+:%d+)") or low:match("spawn[^%d]*(%d+:%d+)")
-                or low:match("respawn[^%d]*(%d+:%d+:%d+)") or low:match("respawn[^%d]*(%d+:%d+)")
-            nFound = extractTimerFromText(sub or (not hasDespawnKw and plain or ""))
-        end
-        return dFound, nFound
-    end
-
-    function BossEngine.refreshTimers(now)
-        if (now - BossEngine.lastTimerScan) < 0.85 then return end
-        BossEngine.lastTimerScan = now
-
-        local despawnFound, nextSpawnFound = nil, nil
-        local okSrvT, srvNowT = pcall(function() return workspace:GetServerTimeNow() end)
-        local srvClock = (okSrvT and type(srvNowT) == "number") and srvNowT or os.time()
-        local wsNextTs = tonumber(workspace:GetAttribute("BossSpawnNextTime"))
-        if wsNextTs and wsNextTs > 1e8 then
-            nextSpawnFound = fmtClockToken(M.max(0, wsNextTs - srvClock))
-        end
-        if not nextSpawnFound and CollectionService then
-            local okSp, spList = pcall(CollectionService.GetTagged, CollectionService, "AlienBossSpawn")
-            if okSp and spList and spList[1] then
-                local alTs = tonumber(spList[1]:GetAttribute("AlienBossRespawnAt"))
-                if alTs and alTs > 1e8 then
-                    nextSpawnFound = fmtClockToken(M.max(0, alTs - srvClock))
-                end
-            end
-        end
-
-        if cachedTimerDespawn and cachedTimerDespawn.Parent then
-            if cachedTimerDespawn:IsA("TextLabel") then
-                local df = extractDespawnAndNextFromText(cachedTimerDespawn.Text or "")
-                despawnFound = df or extractTimerFromText((cachedTimerDespawn.Text or ""):gsub("<[^>]+>", " "))
-            elseif cachedTimerDespawn:IsA("ValueBase") then
-                local okV, rawV = pcall(function() return cachedTimerDespawn.Value end)
-                despawnFound = okV and parseTimerValue(rawV) or nil
-            end
-            if not despawnFound then cachedTimerDespawn = nil end
-        end
-        if not nextSpawnFound and cachedTimerNext and cachedTimerNext.Parent then
-            if cachedTimerNext:IsA("TextLabel") then
-                local _, nf = extractDespawnAndNextFromText(cachedTimerNext.Text or "")
-                nextSpawnFound = nf or extractTimerFromText((cachedTimerNext.Text or ""):gsub("<[^>]+>", " "))
-            elseif cachedTimerNext:IsA("ValueBase") then
-                local okV, rawV = pcall(function() return cachedTimerNext.Value end)
-                nextSpawnFound = okV and parseTimerValue(rawV) or nil
-            end
-            if not nextSpawnFound then cachedTimerNext = nil end
-        end
-
-        if not despawnFound and BossEngine.currentBossModel and BossEngine.currentBossModel.Parent then
-            local m = BossEngine.currentBossModel
-            for ak, av in pairs(m:GetAttributes()) do
-                local al = tostring(ak):lower()
-                if al:find("despawn") or al:find("timeleft") or al:find("expire") or al:find("life") or al:find("timer") then
-                    despawnFound = parseTimerValue(av) or despawnFound
-                end
-            end
-            for _, d in ipairs(m:GetDescendants()) do
-                if d:IsA("ValueBase") then
-                    local dl = d.Name:lower()
-                    if dl:find("despawn") or dl:find("timeleft") or dl:find("expire") or dl:find("timer") then
-                        local okV, rawV = pcall(function() return d.Value end)
-                        local tv = okV and parseTimerValue(rawV) or nil
-                        if tv then despawnFound = tv; cachedTimerDespawn = d; break end
-                    end
-                elseif d:IsA("TextLabel") and d.Text and d.Text ~= "" and d:FindFirstAncestorOfClass("BillboardGui") then
-                    local plain = d.Text:gsub("<[^>]+>", " "):gsub("%s+", " ")
-                    local low = plain:lower()
-                    if low:find("despawn") or low:find("left") or low:find("disappear") or low:find("leave") or low:find("end") then
-                        local tv = extractTimerFromText(plain)
-                        if tv then despawnFound = tv; cachedTimerDespawn = d; break end
-                    end
-                end
-            end
-        end
-
-        if (not despawnFound or not nextSpawnFound) and (now - lastGuiTimerScan >= 12.0) then
-            lastGuiTimerScan = now
-            local timerRoots = {ReplicatedStorage}
-            for ak, av in pairs(workspace:GetAttributes()) do
-                local al = tostring(ak):lower()
-                if (al:find("despawn") or al:find("timeleft") or al:find("bosstimer")) and not despawnFound then
-                    despawnFound = parseTimerValue(av) or despawnFound
-                elseif (al:find("spawn") or al:find("nextboss") or al:find("cooldown")) and not nextSpawnFound then
-                    nextSpawnFound = parseTimerValue(av) or nextSpawnFound
-                end
-            end
-            local wsEvFolder = workspace:FindFirstChild("Events")
-            if wsEvFolder then
-                timerRoots[#timerRoots + 1] = wsEvFolder
-                for _, sub in ipairs(wsEvFolder:GetChildren()) do
-                    timerRoots[#timerRoots + 1] = sub
-                end
-            end
-            for _, fn in ipairs({"bossMaps", "BossMaps", "EventArena", "BossArena", "Arena", "Bosses", "EventBoss", "AlienEvent", "BossInfo", "CurrentBoss", "BossData", "AlienBossSpawn"}) do
-                local rInst = ReplicatedStorage:FindFirstChild(fn)
-                if rInst then timerRoots[#timerRoots + 1] = rInst end
-                local wInst = workspace:FindFirstChild(fn)
-                if wInst then timerRoots[#timerRoots + 1] = wInst end
-            end
-
-            for _, root in ipairs(timerRoots) do
-                for ak, av in pairs(root:GetAttributes()) do
-                    local al = tostring(ak):lower()
-                    if al:find("despawn") or al:find("timeleft") or al:find("bosstimer") then
-                        despawnFound = despawnFound or parseTimerValue(av)
-                    elseif al:find("spawn") or al:find("nextboss") or al:find("cooldown") then
-                        nextSpawnFound = nextSpawnFound or parseTimerValue(av)
-                    end
-                end
-                for _, d in ipairs(root:GetChildren()) do
-                    if d:IsA("ValueBase") then
-                        local dl = d.Name:lower()
-                        if (dl:find("despawn") or dl:find("timeleft") or dl:find("bosstimer")) and not despawnFound then
-                            local okV, rawV = pcall(function() return d.Value end)
-                            local tv = okV and parseTimerValue(rawV) or nil
-                            if tv then despawnFound = tv; cachedTimerDespawn = d end
-                        elseif (dl:find("next") or dl:find("spawn") or dl:find("cooldown") or dl:find("respawn")) and not nextSpawnFound then
-                            local okV, rawV = pcall(function() return d.Value end)
-                            local tv = okV and parseTimerValue(rawV) or nil
-                            if tv then nextSpawnFound = tv; cachedTimerNext = d end
-                        end
-                    end
-                end
-                if root ~= ReplicatedStorage then
-                    for _, d in ipairs(root:GetDescendants()) do
-                        if d:IsA("TextLabel") and d.Text and d.Text ~= "" then
-                            local df, nf = extractDespawnAndNextFromText(d.Text)
-                            if df and not despawnFound then
-                                despawnFound = df; cachedTimerDespawn = d
-                            end
-                            if nf and not nextSpawnFound then
-                                nextSpawnFound = nf; cachedTimerNext = d
-                            end
-                        end
-                    end
-                end
-            end
-
-            local pGui = Player:FindFirstChildOfClass("PlayerGui")
-            if pGui and (not despawnFound or not nextSpawnFound) then
-                for _, gui in ipairs(pGui:GetChildren()) do
-                    if gui:IsA("ScreenGui") and gui.Enabled and gui ~= Runtime.UI.GUI and gui ~= Runtime.UI.ToggleGui and gui.Name ~= "Chat" and gui.Name ~= "TouchGui" then
-                        local gn = gui.Name:lower()
-                        if gn:find("boss") or gn:find("event") or gn:find("alien") or gn:find("arena") then
-                            for _, d in ipairs(gui:GetDescendants()) do
-                                if d:IsA("TextLabel") and d.Visible and d.Text and d.Text ~= "" then
-                                    local df, nf = extractDespawnAndNextFromText(d.Text)
-                                    if df and not despawnFound then
-                                        despawnFound = df; cachedTimerDespawn = d
-                                    end
-                                    if nf and not nextSpawnFound then
-                                        nextSpawnFound = nf; cachedTimerNext = d
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-
-        BossEngine.despawnText = despawnFound or ((#Combat.bossTargets > 0) and "Active" or "--")
-        BossEngine.nextSpawnText = nextSpawnFound or ((#Combat.bossTargets > 0) and "Spawned" or "--")
-    end
-
     local DANGER_ATTR_EXACT = {
         attackcooldown = true, ultcooldown = true, charging = true, casting = true,
         telegraph = true, aoe = true, ultimate = true, ult = true, meteor = true,
         slam = true, shockwave = true, laser = true, nova = true,
     }
     local DANGER_ATTR_KW = {"attackcooldown", "ultcooldown", "charging", "casting", "telegraph", "aoe", "ultimate", "meteor"}
+    local CHARGE_NUM_KW = {"charge", "chargeprogress", "skillcharge", "ultcharge", "castprogress", "windup"}
     local IDLE_ATTR_STR = {none = true, idle = true, ready = true, ["false"] = true, ["0"] = true, normal = true, walk = true, chase = true}
-    local DANGER_ANIM_KW = {"aoe", "ult", "ultimate", "slam", "smash", "stomp", "charge", "windup", "meteor", "shockwave", "nova", "super"}
+    local DANGER_ANIM_KW = {"aoe", "ult", "ultimate", "slam", "smash", "stomp", "charge", "windup", "meteor", "shockwave", "nova", "super", "skill"}
     local DANGER_GUI_KW  = {"warning", "ultimate", "charging", "casting", "slam", "meteor", "laser", "shockwave", "aoe"}
     local dangerAnimSeen = setmetatable({}, {__mode = "k"})
 
@@ -5127,6 +5067,20 @@ do
         return false
     end
 
+    local function readChargeAttrRatio(host)
+        if not host then return nil end
+        for ak, av in pairs(host:GetAttributes()) do
+            if type(av) == "number" and av > 0 then
+                local al = tostring(ak):lower()
+                if hasKw(al, CHARGE_NUM_KW) and not al:find("max", 1, true) then
+                    local ratio = (av <= 1.05) and av or (av / 100)
+                    if ratio >= 0 and ratio <= 1.5 then return ratio end
+                end
+            end
+        end
+        return nil
+    end
+
     function BossEngine.notifyWatchDescendant(d)
         if not d then return end
         local curBoss = BossEngine.currentBossModel
@@ -5135,37 +5089,21 @@ do
                 BossEngine.watchCache[curBoss].t = -100
             end
         end
-        if d:IsA("ValueBase") then
-            local nl = d.Name:lower()
-            if nl:find("despawn") or nl:find("spawn") or nl:find("timer") or nl:find("timeleft") or nl:find("cooldown") then
-                lastGuiTimerScan = -100
-                if BossEngine.markPassiveDirty then BossEngine.markPassiveDirty() end
-            end
-        elseif d:IsA("TextLabel") or d:IsA("SurfaceGui") or d:IsA("BillboardGui") then
-            local cur = d.Parent
-            for _ = 1, 3 do
-                if not cur or cur == workspace or cur == game then break end
-                local cl = cur.Name:lower()
-                if cl:find("boss") or cl:find("arena") or cl:find("event") or cl:find("timer") then
-                    lastGuiTimerScan = -100
-                    if BossEngine.markPassiveDirty then BossEngine.markPassiveDirty() end
-                    break
-                end
-                cur = cur.Parent
-            end
-        end
     end
 
     local function getBossWatchEntry(bossModel, now)
         local entry = BossEngine.watchCache[bossModel]
-        if entry and (now - entry.t < 2.0) then return entry end
-        local bools, labels, highlights = {}, {}, {}
+        if entry and (now - entry.t < 2.5) then return entry end
+        local bools, nums, labels, highlights = {}, {}, {}, {}
         local function collectFrom(root)
             if not root then return end
             for _, d in ipairs(root:GetDescendants()) do
                 if d:IsA("BoolValue") then
                     local dl = d.Name:lower()
                     if DANGER_ATTR_EXACT[dl] or hasKw(dl, DANGER_ATTR_KW) then bools[#bools + 1] = d end
+                elseif d:IsA("NumberValue") or d:IsA("IntValue") then
+                    local dl = d.Name:lower()
+                    if hasKw(dl, CHARGE_NUM_KW) and not dl:find("max", 1, true) then nums[#nums + 1] = d end
                 elseif d:IsA("TextLabel") and d:FindFirstAncestorOfClass("BillboardGui") then
                     labels[#labels + 1] = d
                 elseif d:IsA("Highlight") then
@@ -5177,7 +5115,7 @@ do
         if Combat.adorneeGuiByModel[bossModel] then
             collectFrom(Combat.adorneeGuiByModel[bossModel])
         end
-        entry = {bools = bools, labels = labels, highlights = highlights, t = now}
+        entry = {bools = bools, nums = nums, labels = labels, highlights = highlights, t = now}
         BossEngine.watchCache[bossModel] = entry
         return entry
     end
@@ -5187,15 +5125,15 @@ do
         if d:IsA("Highlight") then
             if d.Enabled and d.FillTransparency < 0.90 and bossModel and d:IsDescendantOf(bossModel) then
                 local c = d.FillColor
-                if c.R > 0.58 and c.G < 0.42 and c.B < 0.42 then
-                    return true, 100, false
+                if (c.R > 0.55 and c.G < 0.45 and c.B < 0.45) or BossEngine.spawnedPartTimes[d] ~= nil then
+                    return true, 120, false
                 end
             end
             return false, 0, false
         end
         if d:IsA("Explosion") then
-            if (d.Position - bPos).Magnitude <= 240 then
-                return true, 110, true
+            if (d.Position - bPos).Magnitude <= 280 then
+                return true, 140, true
             end
             return false, 0, false
         end
@@ -5206,11 +5144,11 @@ do
             local recent = (spT ~= nil) and ((M.clock() - spT) <= 4.5)
             if not recent then return false, 0, false end
             if bossModel and d:IsDescendantOf(bossModel) then
-                if nl:find("ult") or nl:find("meteor") or nl:find("explosion") or nl:find("shockwave") then
-                    return true, 100, true
+                if nl:find("ult") or nl:find("meteor") or nl:find("explosion") or nl:find("shockwave") or nl:find("charge") or nl:find("laser") then
+                    return true, 130, true
                 end
-            elseif nl:find("ult") or nl:find("meteor") or nl:find("explosion") or nl:find("blast") or nl:find("aoe") or nl:find("shockwave") then
-                return true, 100, true
+            elseif nl:find("ult") or nl:find("meteor") or nl:find("explosion") or nl:find("blast") or nl:find("aoe") or nl:find("shockwave") or nl:find("laser") or nl:find("beam") then
+                return true, 130, true
             end
             return false, 0, false
         end
@@ -5219,14 +5157,14 @@ do
                 local nl = d.Name:lower()
                 if hasKw(nl, AOE_KW) and BossEngine.spawnedPartTimes[d] ~= nil then
                     local sz = M.max(d.Parent.Size.X, d.Parent.Size.Z) * 0.5
-                    return true, sz + 45, true
+                    return true, sz + 60, false
                 end
             end
             return false, 0, false
         end
         if not d:IsA("BasePart") then return false, 0, false end
         if isInteractiveGuiOrButton(d) then return false, 0, false end
-        if (d.Position - bPos).Magnitude > 240 then return false, 0, false end
+        if (d.Position - bPos).Magnitude > 280 then return false, 0, false end
         local dLow = d.Name:lower()
         if dLow:find("rock", 1, true) or dLow:find("machine", 1, true) or dLow:find("chest", 1, true)
             or dLow:find("portal", 1, true) or dLow:find("statue", 1, true) or dLow:find("pillar", 1, true)
@@ -5249,29 +5187,33 @@ do
                     return false, 0, false
                 end
             end
-            return true, sz + 45, true
+            local isFastBlast = dLow:find("explosion", 1, true) or dLow:find("shockwave", 1, true) or dLow:find("laser", 1, true) or dLow:find("beam", 1, true)
+            return true, sz + 65, isFastBlast ~= nil
         end
 
         if bossModel and d:IsDescendantOf(bossModel) then return false, 0, false end
-        local col = d.Color
-        if col.B > col.R + 0.15 then return false, 0, false end
-        if d.Size.Y > 6.0 or (d.CanCollide and d.Size.Y > 3.5) or sz < 3.0 or d.Transparency >= 0.95 then
-            return false, 0, false
-        end
-
-        local isRedRect = (col.R > 0.62 and col.G < 0.38 and col.B < 0.38)
-        local isYellowShock = (col.R > 0.72 and col.G > 0.48 and col.B < 0.35)
-        if not (isRedRect or isYellowShock) then return false, 0, false end
-
         local spT = BossEngine.spawnedPartTimes[d]
         if not spT then return false, 0, false end
-        local age = M.clock() - spT
-        if age > 8.0 and d.Anchored then return false, 0, false end
-        if (d.Size.X > 65 or d.Size.Z > 65) and not (isYellowShock and age <= 6.0) then
+        if d.Size.Y > 8.0 or (d.CanCollide and d.Size.Y > 3.5) or sz < 3.0 or d.Transparency >= 0.95 then
             return false, 0, false
         end
 
-        local rad = sz + 45
+        local col = d.Color
+        if not (col and col.ToHSV) then return false, 0, false end
+        local _, sSat, vVal = col:ToHSV()
+        local isSkillMaterial = (d.Material == Enum.Material.Neon or d.Material == Enum.Material.ForceField or d.Transparency >= 0.15)
+        local isSkillColor = (col.R > 0.62 and col.G < 0.38 and col.B < 0.38)
+            or (col.R > 0.72 and col.G > 0.48 and col.B < 0.35)
+            or (isSkillMaterial and sSat >= 0.45 and vVal >= 0.40)
+        if not isSkillColor then return false, 0, false end
+
+        local age = M.clock() - spT
+        if age > 8.0 and d.Anchored then return false, 0, false end
+        if (d.Size.X > 160 or d.Size.Z > 160) and age > 6.0 then
+            return false, 0, false
+        end
+
+        local rad = sz + 65
         return true, rad, false
     end
 
@@ -5281,14 +5223,28 @@ do
             if BossEngine.noClipChar ~= char then
                 BossEngine.noClipChar = char
                 BossEngine.noClipBackup = setmetatable({}, {__mode = "k"})
-            end
-            for _, p in ipairs(char:GetChildren()) do
-                if p:IsA("BasePart") then
-                    if BossEngine.noClipBackup[p] == nil then BossEngine.noClipBackup[p] = p.CanCollide end
-                    if p.CanCollide then p.CanCollide = false end
+                if BossEngine.noClipConn then
+                    pcall(function() BossEngine.noClipConn:Disconnect() end)
+                    BossEngine.noClipConn = nil
                 end
+                for _, p in ipairs(char:GetChildren()) do
+                    if p:IsA("BasePart") then
+                        BossEngine.noClipBackup[p] = p.CanCollide
+                        if p.CanCollide then p.CanCollide = false end
+                    end
+                end
+                BossEngine.noClipConn = char.ChildAdded:Connect(function(p)
+                    if Config.Active and Config.AutoKillBoss and BossEngine.noClipChar == char and p:IsA("BasePart") then
+                        if BossEngine.noClipBackup[p] == nil then BossEngine.noClipBackup[p] = p.CanCollide end
+                        if p.CanCollide then p.CanCollide = false end
+                    end
+                end)
             end
         else
+            if BossEngine.noClipConn then
+                pcall(function() BossEngine.noClipConn:Disconnect() end)
+                BossEngine.noClipConn = nil
+            end
             for p, origC in pairs(BossEngine.noClipBackup) do
                 pcall(function() if p and p.Parent then p.CanCollide = origC end end)
                 BossEngine.noClipBackup[p] = nil
@@ -5303,16 +5259,16 @@ do
         applyBossNoClip(Player.Character, false)
     end
 
-    local cachedAoeState, cachedAoeRad = false, 120
+    local cachedAoeState, cachedAoeRad = false, 140
     local lastRootAoeScan = -100
     local function detectBossAOEOrUlt(bossObj, now)
-        if not bossObj or not bossObj.part or not bossObj.part.Parent then return false, 120 end
+        if not bossObj or not bossObj.part or not bossObj.part.Parent then return false, 140 end
 
         local bPos = bossObj.part.Position
         local dangerRadius, telegraphNow, immediateNow = 0, false, false
         local inFirstHalfCharge = false
 
-        if (now - BossEngine.lastAoeCheck) >= 0.04 or now < BossEngine.aoeFlagUntil then
+        if (now - BossEngine.lastAoeCheck) >= 0.055 or now < BossEngine.aoeFlagUntil then
             BossEngine.lastAoeCheck = now
 
             pcall(function()
@@ -5323,21 +5279,22 @@ do
                     atkHosts[#atkHosts + 1] = bossObj.model.Parent
                 end
                 atkHosts[#atkHosts + 1] = workspace
-                local atkSeq, atkKind, atkCF, atkImpact = nil, nil, nil, nil
+                local atkSeq, atkKind, atkCF, atkImpact, numCharge = nil, nil, nil, nil, nil
                 for _, aHost in ipairs(atkHosts) do
                     if atkSeq == nil then atkSeq = aHost:GetAttribute("BossAttackSequence") end
                     if atkKind == nil then atkKind = aHost:GetAttribute("BossAttackKind") end
                     if atkCF == nil then atkCF = aHost:GetAttribute("BossAttackCFrame") end
                     if atkImpact == nil then atkImpact = tonumber(aHost:GetAttribute("BossAttackImpactTime")) end
+                    if numCharge == nil then numCharge = readChargeAttrRatio(aHost) end
                 end
                 local kindLow = (type(atkKind) == "string") and atkKind:lower() or ""
                 local isHeavyAtk = (kindLow:find("stomp") or kindLow:find("slam") or kindLow:find("shock")
                     or kindLow:find("aoe") or kindLow:find("ult") or kindLow:find("jump") or kindLow:find("meteor")
                     or kindLow:find("laser") or kindLow:find("blast") or kindLow:find("skill")) ~= nil
                 local isIdleAtk = (kindLow == "" or kindLow == "none" or kindLow == "idle" or kindLow == "walk")
-                local baseAtkRad = isHeavyAtk and 145 or 115
+                local baseAtkRad = isHeavyAtk and 170 or 130
                 if typeof(atkCF) == "CFrame" then
-                    baseAtkRad = M.max(baseAtkRad, M.min(200, (atkCF.Position - bPos).Magnitude + 95))
+                    baseAtkRad = M.max(baseAtkRad, M.min(240, (atkCF.Position - bPos).Magnitude + 110))
                 end
 
                 if atkImpact ~= nil and atkImpact > 0 then
@@ -5350,16 +5307,16 @@ do
                             BossEngine.seqTotal = M.clamp(rem, 0.25, 8.0)
                         end
                     end
-                    if not isIdleAtk and rem >= -0.25 and rem <= 8.0 then
+                    if not isIdleAtk and rem >= -0.35 and rem <= 8.0 then
                         local seqStart = BossEngine.seqStart or srvNow
                         local seqTotal = BossEngine.seqTotal or M.clamp(rem, 0.25, 8.0)
                         local elapsed = srvNow - seqStart
-                        if elapsed < seqTotal * 0.45 and rem > 0.35 then
+                        if elapsed < seqTotal * 0.50 and rem > 0.28 then
                             inFirstHalfCharge = true
                         else
                             telegraphNow = true
                             dangerRadius = M.max(dangerRadius, baseAtkRad)
-                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + M.clamp(rem + 0.30, 0.20, 2.0))
+                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + M.clamp(rem + 0.35, 0.25, 2.2))
                         end
                     end
                 elseif atkSeq ~= nil then
@@ -5368,33 +5325,65 @@ do
                         if isHeavyAtk then
                             telegraphNow = true
                             dangerRadius = M.max(dangerRadius, baseAtkRad)
-                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.75)
+                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.90)
                         end
                     elseif BossEngine.lastAttackSeq == nil then
                         BossEngine.lastAttackSeq = atkSeq
                     end
                 end
 
+                if numCharge ~= nil then
+                    if numCharge < 0.50 then
+                        inFirstHalfCharge = true
+                    else
+                        telegraphNow = true; immediateNow = true
+                        dangerRadius = M.max(dangerRadius, baseAtkRad)
+                    end
+                end
+
                 for ak, av in pairs(bossObj.model:GetAttributes()) do
                     if isActiveDangerAttr(ak, av) then
-                        telegraphNow = true; immediateNow = true
-                        dangerRadius = M.max(dangerRadius, 110)
+                        if not inFirstHalfCharge then
+                            telegraphNow = true; immediateNow = true
+                            dangerRadius = M.max(dangerRadius, baseAtkRad)
+                        end
                     end
                 end
 
                 local wEntry = getBossWatchEntry(bossObj.model, now)
+                for _, nv in ipairs(wEntry.nums) do
+                    if nv and nv.Parent and tonumber(nv.Value) and nv.Value > 0 then
+                        local ratio = (nv.Value <= 1.05) and nv.Value or (nv.Value / 100)
+                        if ratio < 0.50 then
+                            inFirstHalfCharge = true
+                        else
+                            telegraphNow = true; immediateNow = true
+                            dangerRadius = M.max(dangerRadius, baseAtkRad)
+                        end
+                    end
+                end
                 for _, bv in ipairs(wEntry.bools) do
-                    if bv and bv.Parent and bv.Value == true then
+                    if bv and bv.Parent and bv.Value == true and not inFirstHalfCharge then
                         telegraphNow = true; immediateNow = true
-                        dangerRadius = M.max(dangerRadius, 110)
+                        dangerRadius = M.max(dangerRadius, baseAtkRad)
                     end
                 end
                 for _, lbl in ipairs(wEntry.labels) do
                     if lbl and lbl.Parent and lbl.Visible and lbl.Text and lbl.Text ~= "" then
                         local tl = lbl.Text:gsub("<[^>]+>", " "):lower()
-                        if tl == "!" or hasKw(tl, DANGER_GUI_KW) then
-                            telegraphNow = true; immediateNow = true
-                            dangerRadius = M.max(dangerRadius, 110)
+                        local pctNum = tonumber(tl:match("(%d+)%%"))
+                        if pctNum and (tl:find("charg") or tl:find("ult") or tl:find("cast")) then
+                            if pctNum < 50 then
+                                inFirstHalfCharge = true
+                            else
+                                telegraphNow = true; immediateNow = true
+                                dangerRadius = M.max(dangerRadius, baseAtkRad)
+                            end
+                        elseif tl == "!" or hasKw(tl, DANGER_GUI_KW) then
+                            if not inFirstHalfCharge then
+                                telegraphNow = true; immediateNow = true
+                                dangerRadius = M.max(dangerRadius, baseAtkRad)
+                            end
                         end
                     end
                 end
@@ -5410,24 +5399,43 @@ do
 
                 local humOrAc = bossObj.hum or bossObj.model:FindFirstChildWhichIsA("AnimationController", true)
                 local animator = humOrAc and humOrAc:FindFirstChildOfClass("Animator")
-                if animator and not inFirstHalfCharge then
+                if animator then
                     for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
                         local an = (tr.Animation and tr.Animation.Name or tr.Name):lower()
                         if not (an:find("idle", 1, true) or an:find("walk", 1, true) or an:find("run", 1, true) or an:find("hover", 1, true)) and hasKw(an, DANGER_ANIM_KW) then
                             local seenT = dangerAnimSeen[tr]
                             if not seenT then seenT = now; dangerAnimSeen[tr] = now end
-                            local isDirectUlt = (an:find("ult", 1, true) or an:find("slam", 1, true) or an:find("aoe", 1, true)) ~= nil
-                            if isDirectUlt or (now - seenT >= 0.25) then
-                                telegraphNow = true
-                                if atkImpact == nil and isDirectUlt then immediateNow = true end
-                                dangerRadius = M.max(dangerRadius, 110)
+                            local len = tonumber(tr.Length) or 0
+                            local pos = tonumber(tr.TimePosition) or 0
+                            if len > 0.35 then
+                                if (pos / len) >= 0.50 then
+                                    telegraphNow = true; immediateNow = true
+                                    dangerRadius = M.max(dangerRadius, baseAtkRad)
+                                else
+                                    inFirstHalfCharge = true
+                                end
+                            elseif len > 0 then
+                                if pos >= len * 0.50 then
+                                    telegraphNow = true
+                                    dangerRadius = M.max(dangerRadius, baseAtkRad)
+                                else
+                                    inFirstHalfCharge = true
+                                end
+                            else
+                                if (now - seenT) >= 0.25 then
+                                    telegraphNow = true
+                                    if atkImpact == nil and (an:find("ult", 1, true) or an:find("slam", 1, true) or an:find("aoe", 1, true)) then
+                                        immediateNow = true
+                                    end
+                                    dangerRadius = M.max(dangerRadius, baseAtkRad)
+                                end
                             end
                         end
                     end
                 end
             end)
 
-            if (now - lastRootAoeScan) >= 0.16 then
+            if (now - lastRootAoeScan) >= 0.18 then
                 lastRootAoeScan = now
                 local checkRoots = {bossObj.model, workspace}
                 local seenR = {[bossObj.model] = true, [workspace] = true}
@@ -5457,7 +5465,8 @@ do
                             if BossEngine.trackedDangerInsts[d] == nil then
                                 local okD, rad, isImm = BossEngine.isDangerPart(d, bossObj.model, bPos)
                                 if okD then
-                                    BossEngine.trackedDangerInsts[d] = {seen = now, immediate = isImm == true, rad = rad}
+                                    local initSz = d:IsA("BasePart") and (M.max(d.Size.X, d.Size.Z) * 0.5) or 0
+                                    BossEngine.trackedDangerInsts[d] = {seen = now, immediate = isImm == true, rad = rad, initSz = initSz}
                                 end
                             end
                         end
@@ -5465,12 +5474,13 @@ do
                 end
             end
 
+            local activePartList = {}
             for inst, info in pairs(BossEngine.trackedDangerInsts) do
                 if not (inst and inst.Parent) then
                     BossEngine.trackedDangerInsts[inst] = nil
                 else
                     local stillLive = true
-                    if inst:IsA("BasePart") and (inst.Transparency >= 0.96 or (inst.Position - bPos).Magnitude > 260) then
+                    if inst:IsA("BasePart") and (inst.Transparency >= 0.96 or (inst.Position - bPos).Magnitude > 290) then
                         stillLive = false
                     elseif inst:IsA("Highlight") and not inst.Enabled then
                         stillLive = false
@@ -5478,33 +5488,61 @@ do
                         stillLive = false
                     end
                     if stillLive then
-                        local rec = (type(info) == "table") and info or {seen = now, immediate = true, rad = 100}
-                        local rad = inst:IsA("BasePart") and (M.max(inst.Size.X, inst.Size.Z) * 0.5 + 45) or (rec.rad or 100)
-                        local isImm = rec.immediate == true
-                        if isImm or (not inFirstHalfCharge and (now - rec.seen) >= 0.35) then
-                            telegraphNow = true
-                            dangerRadius = M.max(dangerRadius, rad)
-                            if rec.immediate then immediateNow = true end
-                        end
+                        local rec = (type(info) == "table") and info or {seen = now, immediate = true, rad = 120, initSz = 0}
+                        local curSz = inst:IsA("BasePart") and (M.max(inst.Size.X, inst.Size.Z) * 0.5) or 0
+                        activePartList[#activePartList + 1] = {inst = inst, rec = rec, curSz = curSz}
                     else
                         BossEngine.trackedDangerInsts[inst] = nil
                     end
                 end
             end
 
+            for _, item in ipairs(activePartList) do
+                local inst, rec, curSz = item.inst, item.rec, item.curSz
+                local rad = inst:IsA("BasePart") and (curSz + 65) or (rec.rad or 120)
+                local isImm = rec.immediate == true
+                local dualHalfReady, hasOuterRing, isOuterOfDual = false, false, false
+
+                if inst:IsA("BasePart") and #activePartList >= 2 then
+                    for _, other in ipairs(activePartList) do
+                        if other.inst ~= inst and other.inst:IsA("BasePart") and (other.inst.Position - inst.Position).Magnitude <= 16 then
+                            if other.curSz > curSz * 1.15 then
+                                hasOuterRing = true
+                                rad = M.max(rad, other.curSz + 65)
+                                if (curSz / M.max(other.curSz, 0.1)) >= 0.50 then
+                                    dualHalfReady = true
+                                end
+                            elseif curSz > other.curSz * 1.15 then
+                                isOuterOfDual = true
+                                rad = M.max(rad, curSz + 65)
+                                if (other.curSz / M.max(curSz, 0.1)) >= 0.50 then
+                                    dualHalfReady = true
+                                end
+                            end
+                        end
+                    end
+                end
+
+                if isImm or dualHalfReady or (not hasOuterRing and not isOuterOfDual and not inFirstHalfCharge and (now - rec.seen) >= 0.14) then
+                    telegraphNow = true
+                    dangerRadius = M.max(dangerRadius, rad)
+                    if isImm or dualHalfReady then immediateNow = true end
+                end
+            end
+
             if telegraphNow then
                 BossEngine.wasTelegraphActive = true
                 if immediateNow then BossEngine.wasImmediateHazard = true end
-                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + (immediateNow and 0.65 or 0.25))
+                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + (immediateNow and 0.85 or 0.35))
             elseif BossEngine.wasTelegraphActive then
                 BossEngine.wasTelegraphActive = false
-                local holdDur = BossEngine.wasImmediateHazard and 0.45 or 0.25
+                local holdDur = BossEngine.wasImmediateHazard and 0.55 or 0.30
                 BossEngine.wasImmediateHazard = false
                 BossEngine.postAttackHoldUntil = M.max(BossEngine.postAttackHoldUntil, now + holdDur)
             end
 
             cachedAoeState = telegraphNow or (now < BossEngine.aoeFlagUntil) or (now < BossEngine.postAttackHoldUntil) or (now < BossEngine.evadeUntil)
-            cachedAoeRad = M.clamp(dangerRadius, 110, 280)
+            cachedAoeRad = M.clamp(dangerRadius, 130, 320)
         else
             cachedAoeState = (now < BossEngine.aoeFlagUntil) or (now < BossEngine.postAttackHoldUntil) or (now < BossEngine.evadeUntil)
         end
@@ -5715,7 +5753,7 @@ do
             if BossEngine.tweenStartPos ~= nil then
                 local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
                 local refPart = tgt.head or tgt.part
-                if not (root and refPart and refPart.Parent and (refPart.Position - root.Position).Magnitude <= 28) then
+                if not (root and refPart and refPart.Parent and (refPart.Position - root.Position).Magnitude <= 35) then
                     return
                 end
             end
@@ -5852,7 +5890,6 @@ do
             BossEngine.currentTargetObj = nil
             BossEngine.lastHoverCF = nil
             BossEngine.liveDps = BossEngine.liveDps * 0.90
-            BossEngine.refreshTimers(now)
             local alt = Combat.bossTargets[1]
             if alt then
                 local altKind = alt.isEvent and "Event" or (alt.tierWord or "Normal")
@@ -5900,15 +5937,13 @@ do
         target.maxHp = curMax
         target.hpPending = curPending
 
-        BossEngine.refreshTimers(now)
-
         if BossEngine.prevPlayerHP and hum.Health < BossEngine.prevPlayerHP - 0.1 then
-            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 2.2)
-            BossEngine.lastSafeDist = M.min(420, (BossEngine.lastSafeDist or 290) + 30)
+            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 2.4)
+            BossEngine.lastSafeDist = M.min(580, (BossEngine.lastSafeDist or 380) + 60)
         end
         BossEngine.prevPlayerHP = hum.Health
 
-        local aoeDetected, aoeRadius = false, 120
+        local aoeDetected, aoeRadius = false, 140
         if Config.BossAOEEvade then
             aoeDetected, aoeRadius = detectBossAOEOrUlt(target, now)
         end
@@ -5933,10 +5968,10 @@ do
             end
             BossEngine.evadingAOE = true
             BossEngine.tweenStartPos = nil
-            local safeDist = M.clamp(M.max(aoeRadius + 185, BossEngine.lastSafeDist or 290), 290, 380)
+            local safeDist = M.clamp(M.max(aoeRadius + 240, BossEngine.lastSafeDist or 380), 380, 560)
             BossEngine.lastSafeDist = safeDist
-            local horizDist = safeDist * 0.58
-            local vertDist = safeDist * 0.83
+            local horizDist = safeDist * 0.72
+            local vertDist = safeDist * 0.70
             local safePos = target.part.Position + (BossEngine.dodgeEscapeDir * horizDist) + Vector3.new(0, vertDist, 0)
             local safeCF = CFrame.new(safePos, Vector3.new(bPos.X, safePos.Y, bPos.Z))
             BossEngine.lastSafeSpot = safePos
@@ -5950,7 +5985,7 @@ do
 
         BossEngine.evadingAOE = false
         BossEngine.dodgeEscapeDir = nil
-        BossEngine.lastSafeDist = 290
+        BossEngine.lastSafeDist = 380
 
         -- SMOOTH HEAD-TWEEN & UPRIGHT HITBOX CONTACT:
         local headPos = bHead.Position
@@ -5965,7 +6000,7 @@ do
             headPos = target.part.Position + Vector3.new(0, topOff, 0)
         end
         local headTopY = (bHead.Size and bHead.Size.Y or 2) * 0.5
-        local vertClear = (bHead == target.part) and 0.65 or M.clamp(headTopY * 0.15, 0.15, 0.75)
+        local vertClear = (bHead == target.part) and 0.65 or M.clamp(headTopY * 0.25, 0.25, 0.90)
         local lookFlat = (bHead.CFrame.LookVector * Vector3.new(1, 0, 1))
         local faceDir = (lookFlat.Magnitude > 0.05) and lookFlat.Unit or Vector3.new(0, 0, -1)
         local hoverPos = headPos + Vector3.new(0, vertClear, 0)
@@ -5973,13 +6008,13 @@ do
 
         local distToHead = (hoverPos - root.Position).Magnitude
         local nextCF = hoverCF
-        if distToHead > 14 then
-            if not BossEngine.tweenStartPos or BossEngine.tweenTargetModel ~= target.model or (now - BossEngine.tweenStartT) > (BossEngine.tweenDur + 0.12) then
+        if distToHead > 12 then
+            if not BossEngine.tweenStartPos or BossEngine.tweenTargetModel ~= target.model or (now - BossEngine.tweenStartT) > (BossEngine.tweenDur + 0.16) then
                 BossEngine.tweenStartPos = root.Position
                 BossEngine.tweenStartT = now
                 BossEngine.tweenElapsed = 0
                 BossEngine.tweenTargetModel = target.model
-                BossEngine.tweenDur = M.clamp(distToHead / 2400, 0.06, 0.12)
+                BossEngine.tweenDur = M.clamp(distToHead / 4200, 0.05, 0.16)
             end
             BossEngine.tweenElapsed = (BossEngine.tweenElapsed or 0) + M.max(dt or 0.016, 0)
             local rawA = M.max(now - BossEngine.tweenStartT, BossEngine.tweenElapsed) / M.max(BossEngine.tweenDur, 0.001)
@@ -5989,19 +6024,8 @@ do
             else
                 local a = M.clamp(rawA, 0, 1)
                 local alpha = 1 - (1 - a) * (1 - a)
-                if BossEngine.hasTwGetValue ~= false then
-                    local okTw, twVal = pcall(function()
-                        return TweenService:GetValue(a, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-                    end)
-                    if okTw and type(twVal) == "number" then
-                        BossEngine.hasTwGetValue = true
-                        alpha = M.clamp(twVal, 0, 1)
-                    else
-                        BossEngine.hasTwGetValue = false
-                    end
-                end
                 local stepPos = BossEngine.tweenStartPos:Lerp(hoverPos, alpha)
-                if (hoverPos - stepPos).Magnitude <= 14 then
+                if (hoverPos - stepPos).Magnitude <= 12 then
                     BossEngine.tweenStartPos = nil
                     nextCF = hoverCF
                 else
@@ -6034,7 +6058,6 @@ do
         lastPassivePoll = now
         local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
         if root then Combat.refreshTargets(root.Position, false) end
-        BossEngine.refreshTimers(now)
     end
 end
 
@@ -6045,6 +6068,8 @@ local CharPhysics = {
     bodyVel = nil, bodyGyro = nil, waterPlatform = nil, waterPartsBackup = {},
     waterPartConn = nil, scaleBackup = {}, scaleConns = {}, origModelScale = 1,
     walkSpeedConn = nil, trackedHum = nil, trackedSizeChar = nil, lastVoxelCheck = 0,
+    freezeEnabled = false, freezeCF = nil, freezeAnchoredBackup = nil,
+    freezeSpeedBackup = nil, freezeJumpPowBackup = nil, freezeJumpHtBackup = nil, freezeChar = nil,
 }
 
 do
@@ -6189,14 +6214,100 @@ do
             if CharPhysics.walkSpeedConn then CharPhysics.walkSpeedConn:Disconnect() end
             CharPhysics.trackedHum = hum
             CharPhysics.walkSpeedConn = hum:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
-                if Config.Active and Config.WalkSpeedEnabled then
+                if Config.Active and Config.WalkSpeedEnabled and not CharPhysics.freezeEnabled then
                     local r = tonumber(Config.WalkSpeedValue) or 100
                     local t = (r == M.huge) and 5000 or M.max(0, r)
                     if hum.WalkSpeed ~= t then hum.WalkSpeed = t end
                 end
             end)
         end
+        if CharPhysics.freezeEnabled then
+            if hum.WalkSpeed ~= 0 then pcall(function() hum.WalkSpeed = 0 end) end
+            return
+        end
         if hum.WalkSpeed ~= targetSpd then hum.WalkSpeed = targetSpd end
+    end
+
+    function CharPhysics.applyFreeze(on)
+        local want = (on == true) and Config.Active
+        CharPhysics.freezeEnabled = want
+        local char = Player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if want then
+            if root then
+                if CharPhysics.freezeChar ~= char or CharPhysics.freezeAnchoredBackup == nil then
+                    CharPhysics.freezeAnchoredBackup = root.Anchored
+                    CharPhysics.freezeChar = char
+                end
+                CharPhysics.freezeCF = root.CFrame
+                pcall(function() root.AssemblyLinearVelocity = Vector3.zero; root.AssemblyAngularVelocity = Vector3.zero end)
+                pcall(function() root.Velocity = Vector3.zero; root.RotVelocity = Vector3.zero end)
+                pcall(function() root.Anchored = true end)
+            end
+            if hum then
+                if CharPhysics.freezeSpeedBackup == nil then
+                    local okS, ws = pcall(function() return hum.WalkSpeed end)
+                    CharPhysics.freezeSpeedBackup = okS and ws or OriginalState.WalkSpeed
+                    local okP, jp = pcall(function() return hum.JumpPower end)
+                    if okP and type(jp) == "number" then CharPhysics.freezeJumpPowBackup = jp end
+                    local okH, jh = pcall(function() return hum.JumpHeight end)
+                    if okH and type(jh) == "number" then CharPhysics.freezeJumpHtBackup = jh end
+                end
+                pcall(function() hum.WalkSpeed = 0 end)
+                pcall(function() hum.JumpPower = 0 end)
+                pcall(function() hum.JumpHeight = 0 end)
+            end
+        else
+            if root then
+                local restoreAnc = (CharPhysics.freezeAnchoredBackup == true)
+                pcall(function() root.Anchored = restoreAnc end)
+                pcall(function() root.AssemblyLinearVelocity = Vector3.zero; root.AssemblyAngularVelocity = Vector3.zero end)
+                pcall(function() root.Velocity = Vector3.zero; root.RotVelocity = Vector3.zero end)
+            end
+            if hum then
+                if Config.Active and Config.WalkSpeedEnabled then
+                    CharPhysics.applyWalkSpeed()
+                else
+                    pcall(function() hum.WalkSpeed = CharPhysics.freezeSpeedBackup or OriginalState.WalkSpeed end)
+                end
+                if CharPhysics.freezeJumpPowBackup ~= nil then
+                    pcall(function() hum.JumpPower = CharPhysics.freezeJumpPowBackup end)
+                end
+                if CharPhysics.freezeJumpHtBackup ~= nil then
+                    pcall(function() hum.JumpHeight = CharPhysics.freezeJumpHtBackup end)
+                end
+            end
+            CharPhysics.freezeCF = nil
+            CharPhysics.freezeAnchoredBackup = nil
+            CharPhysics.freezeSpeedBackup = nil
+            CharPhysics.freezeJumpPowBackup = nil
+            CharPhysics.freezeJumpHtBackup = nil
+            CharPhysics.freezeChar = nil
+        end
+    end
+
+    function CharPhysics.stepFreeze()
+        if not (Config.Active and CharPhysics.freezeEnabled) then return end
+        local char = Player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not (char and root) then return end
+        if CharPhysics.freezeChar ~= char or not CharPhysics.freezeCF then
+            CharPhysics.applyFreeze(true)
+            return
+        end
+        if not root.Anchored then
+            pcall(function() root.Anchored = true end)
+        end
+        if (root.Position - CharPhysics.freezeCF.Position).Magnitude > 0.05 then
+            root.CFrame = CharPhysics.freezeCF
+            pcall(function() root.AssemblyLinearVelocity = Vector3.zero; root.AssemblyAngularVelocity = Vector3.zero end)
+            pcall(function() root.Velocity = Vector3.zero; root.RotVelocity = Vector3.zero end)
+        end
+        if hum and hum.WalkSpeed ~= 0 then
+            pcall(function() hum.WalkSpeed = 0 end)
+        end
     end
 
     local SCALE_NAMES = {"BodyHeightScale", "BodyWidthScale", "BodyDepthScale", "HeadScale"}
@@ -7939,10 +8050,9 @@ do
         UI.punValLine = createStatusLabel(P, "Punches: 0 | Rate: 0/s", Theme.Text, false, 9)
         createSmallBtn(P, "Reset Calcs", Theme.Red, Telemetry.resetPunch)
 
-        local PUN_GROUP = {"AutoPunch", "FastPunch"}
         local function onPunchChanged()
             Runtime.SessionTokens.pun += 1
-            if Config.AutoPunch or Config.FastPunch then
+            if Config.AutoPunch then
                 Combat.lastTargetScan = -100
             else
                 Telemetry.punchTracker = Telemetry.newTracker()
@@ -7951,8 +8061,10 @@ do
             end
         end
 
-        createToggle(P, "Punch", "Auto Punch", "AutoPunch", PUN_GROUP, onPunchChanged, "smooth arm swing + low-ping hit")
-        createToggle(P, "Punch", "Fast Punch", "FastPunch", PUN_GROUP, onPunchChanged, "fast server punch without ping spike")
+        createToggle(P, "Punch", "Auto Punch", "AutoPunch", nil, onPunchChanged, "smooth arm swing + low-ping hit")
+        createToggle(P, "Punch", "Freeze Character", "FreezeCharacter", nil, function(on)
+            CharPhysics.applyFreeze(on)
+        end, "locks character firmly in place (toggle on/off anytime)")
         createNumberInput(P, "Punch Speed (Default: 60 | Max: 500)", "PunchSpeed", 1, 500, false)
     end
 
@@ -7966,7 +8078,6 @@ do
         UI.bossSpawnedLine.TextWrapped = true
         UI.bossSpawnedLine.AutomaticSize = Enum.AutomaticSize.Y
         UI.bossSpawnedLine.Size = UDim2.new(1, -4, 0, 14)
-        UI.bossTimerLine   = createStatusLabel(P, "Despawn In: -- | Next Spawn: --", Theme.Yellow, false, 8)
         UI.bossDamageLine  = createStatusLabel(P, "Boss Damage: 0 | DPS: 0/s | Target: Common Boss", Theme.CyberCyan, false, 8)
         UI.bossDamageLine.TextWrapped = false
         UI.bossDamageLine.TextTruncate = Enum.TextTruncate.AtEnd
@@ -8031,7 +8142,7 @@ do
             refreshBossChoiceHighlights()
         end)
 
-        createToggle(P, "Boss", "Auto Kill Boss (Head-Hover + Fast Punch)", "AutoKillBoss", nil, function(on)
+        createToggle(P, "Boss", "Auto Kill Boss (Head-Tween + Fast Punch)", "AutoKillBoss", nil, function(on)
             Runtime.SessionTokens.boss += 1
             BossEngine.evadingAOE = false
             BossEngine.dodgeEscapeDir = nil
@@ -8042,6 +8153,7 @@ do
             BossEngine.wasImmediateHazard = false
             BossEngine.lastAtkImpact = nil
             BossEngine.prevPlayerHP = nil
+            BossEngine.lastSafeDist = 380
             BossEngine.trackedDangerInsts = setmetatable({}, {__mode = "k"})
             if on then
                 Combat.lastTargetScan = -100
@@ -8060,10 +8172,10 @@ do
                 end
                 Combat.restoreJoints()
             end
-        end, "hovers safely on boss head, enters hitbox & fast-punches automatically")
+        end, "tweens cleanly to boss head, enters hitbox & fast-punches automatically")
 
         createToggle(P, "Boss", "Auto Evade Boss Ultimate / AOE", "BossAOEEvade", nil, nil,
-            "teleports outside boss AOE range whenever ult/AOE activates (0 damage)")
+            "teleports far outside boss AOE/ult range at 50% charge (0 damage)")
     end
 
     function UIBuilders.Reward(P, ctx)
@@ -8336,13 +8448,17 @@ local function startLoops()
         if not rootGui then return end
         Core.track(rootGui.DescendantAdded:Connect(function(d)
             if myGen ~= Runtime.Gen or not Config.Active then return end
-            if Config.HideNameEnabled and d:IsA("TextLabel") then Visuals.bindHideName(d) end
-            if Config.RepAntiLag then Perf.handleRepAntiLagDesc(d) end
-            if isPlayerGui and (d:IsA("ScreenGui") or d:IsA("TextButton") or d:IsA("ImageButton") or d:IsA("TextLabel")) then
+            local needHide = Config.HideNameEnabled
+            local needAntiLag = Config.RepAntiLag
+            local needRew = isPlayerGui and (Config.AutoCollectRewards or Config.AutoSpinReward)
+            if not (needHide or needAntiLag or needRew) then return end
+            if needHide and d:IsA("TextLabel") then Visuals.bindHideName(d) end
+            if needAntiLag then Perf.handleRepAntiLagDesc(d) end
+            if needRew and (d:IsA("ScreenGui") or d:IsA("TextButton") or d:IsA("ImageButton") or d:IsA("TextLabel")) then
                 if not ((Runtime.UI.GUI and d:IsDescendantOf(Runtime.UI.GUI)) or (Runtime.UI.ToggleGui and d:IsDescendantOf(Runtime.UI.ToggleGui))) then
                     local sg = d:IsA("ScreenGui") and d or d:FindFirstAncestorOfClass("ScreenGui")
                     local gn = sg and sg.Name:lower() or ""
-                    if not (gn:find("popup") or gn:find("effect") or gn:find("float")) then
+                    if not (gn:find("popup") or gn:find("effect") or gn:find("float") or gn:find("gain")) then
                         RewardEngine.invalidateGuiCache()
                     end
                 end
@@ -8389,10 +8505,10 @@ local function startLoops()
         if myChar and (d == myChar or d:IsDescendantOf(myChar)) then return end
 
         local isVfxOrPart = d:IsA("BasePart") or d:IsA("Highlight") or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Explosion") or d:IsA("Decal") or d:IsA("Texture")
-        if isVfxOrPart and Config.AutoKillBoss then
+        if Config.AutoKillBoss and isVfxOrPart then
             BossEngine.spawnedPartTimes[d] = M.clock()
         end
-        if BossEngine.notifyWatchDescendant and (d:IsA("ValueBase") or (BossEngine.currentBossModel and d:IsDescendantOf(BossEngine.currentBossModel))) then
+        if Config.AutoKillBoss and BossEngine.notifyWatchDescendant and BossEngine.currentBossModel and BossEngine.watchCache[BossEngine.currentBossModel] and d:IsDescendantOf(BossEngine.currentBossModel) then
             BossEngine.notifyWatchDescendant(d)
         end
         if d:IsA("Humanoid") or d:IsA("AnimationController") or d:IsA("BillboardGui") or (d:IsA("BasePart") and d.Name == "BossDamageHitbox") then
@@ -8443,13 +8559,15 @@ local function startLoops()
         Combat.lastTargetScan = -100; Combat.lastDeepScan = -100
         CharPhysics.bodyVel = nil; CharPhysics.bodyGyro = nil
         CharPhysics.trackedHum = nil; CharPhysics.trackedSizeChar = nil; CharPhysics.scaleBackup = {}
-        BossEngine.prevPlayerHP = nil; BossEngine.lastHoverCF = nil; BossEngine.tweenStartPos = nil
+        CharPhysics.freezeCF = nil; CharPhysics.freezeChar = nil; CharPhysics.freezeAnchoredBackup = nil
+        BossEngine.prevPlayerHP = nil; BossEngine.lastHoverCF = nil; BossEngine.tweenStartPos = nil; BossEngine.noClipChar = nil
         BossEngine.evadingAOE = false; BossEngine.dodgeEscapeDir = nil; BossEngine.evadeUntil = 0; BossEngine.aoeFlagUntil = 0
-        BossEngine.wasTelegraphActive = false; BossEngine.wasImmediateHazard = false; BossEngine.postAttackHoldUntil = 0; BossEngine.lastSafeDist = 290
+        BossEngine.wasTelegraphActive = false; BossEngine.wasImmediateHazard = false; BossEngine.postAttackHoldUntil = 0; BossEngine.lastSafeDist = 380
         BossEngine.currentTargetObj = nil; BossEngine.prevEngagedModel = nil; BossEngine.prevEngagedHP = nil
         Remotes.lastScan = -100
         if Config.HideNameEnabled then task.defer(Visuals.refreshHideNames) end
         if Config.SizeEnabled then task.defer(CharPhysics.applySize) end
+        if CharPhysics.freezeEnabled then task.defer(function() CharPhysics.applyFreeze(true) end) end
         watchCharacter(newChar)
     end))
 
@@ -8749,13 +8867,19 @@ local function startLoops()
         end
 
         function HudUpdaters.Punch(UI, now, hudDt)
-            local punActive = Config.AutoPunch or Config.FastPunch
+            local punActive = Config.AutoPunch
             local smoothPunchRate = Telemetry.sampleRate(Telemetry.punchTracker, hudDt, punActive)
             local punEl = M.max(0.01, now - Telemetry.punStartTime)
             local rInt = M.floor(smoothPunchRate + 0.5)
             if UI.punStatus then
-                if not punActive then UI.punStatus.Text = "Status: Inactive"; UI.punStatus.TextColor3 = Theme.Red
-                else UI.punStatus.Text = M.fmtStr("Status: Punching | %s/s | Ping: %d ms", Core.fmtExactInt(rInt), Telemetry.livePing); UI.punStatus.TextColor3 = Theme.Green end
+                if punActive then
+                    UI.punStatus.Text = M.fmtStr(CharPhysics.freezeEnabled and "Status: Punching (Frozen) | %s/s | Ping: %d ms" or "Status: Punching | %s/s | Ping: %d ms", Core.fmtExactInt(rInt), Telemetry.livePing)
+                    UI.punStatus.TextColor3 = Theme.Green
+                elseif CharPhysics.freezeEnabled then
+                    UI.punStatus.Text = "Status: Frozen (Movement Locked)"; UI.punStatus.TextColor3 = Theme.CyberCyan
+                else
+                    UI.punStatus.Text = "Status: Inactive"; UI.punStatus.TextColor3 = Theme.Red
+                end
             end
             if UI.punRuntime then UI.punRuntime.Text = "Runtime: " .. Core.fmtTime(punActive and punEl or 0) end
             if UI.punValLine then UI.punValLine.Text = M.fmtStr("Punches: %s | Rate: %s/s", Core.fmt(Telemetry.punchesTotal), Core.fmtExactInt(rInt)) end
@@ -8798,10 +8922,6 @@ local function startLoops()
                 if UI.bossSpawnedLine.Text ~= newSpTxt then UI.bossSpawnedLine.Text = newSpTxt end
                 if UI.bossSpawnedLine.TextColor3 ~= newSpCol then UI.bossSpawnedLine.TextColor3 = newSpCol end
             end
-            if UI.bossTimerLine then
-                local tTxt = M.fmtStr("Despawn In: %s | Next Spawn: %s", BossEngine.despawnText, BossEngine.nextSpawnText)
-                if UI.bossTimerLine.Text ~= tTxt then UI.bossTimerLine.Text = tTxt end
-            end
             if UI.bossDamageLine then
                 local tgtName = BossEngine.currentBossModel and BossEngine.currentBossModel.Name or tostring(Config.SelectedBoss)
                 local dTxt = M.fmtStr("Boss Damage: %s (DPS: %s/s) | Targeted: %s",
@@ -8816,7 +8936,7 @@ local function startLoops()
         end
 
         function HudUpdaters.Reward(UI, now)
-            if (now - lastRewardSpinScan) >= 1.5 then
+            if (now - lastRewardSpinScan) >= 2.5 then
                 lastRewardSpinScan = now
                 pcall(RewardEngine.refreshSpinsCache)
             end
@@ -8862,7 +8982,8 @@ local function startLoops()
             if myGen ~= Runtime.Gen or not Config.Active then return end
             Perf.realCyclesThisSec += 1
             if Config.AutoKillBoss then BossEngine.maintainHold() end
-            if Config.AutoPunch or Config.FastPunch or Config.AutoKillBoss or Combat.swingProgress < 1 then
+            if CharPhysics.freezeEnabled and not Config.AutoKillBoss then CharPhysics.stepFreeze() end
+            if Config.AutoPunch or Config.AutoKillBoss or Combat.swingProgress < 1 then
                 Combat.stepKinematics(stepDt)
             end
         end))
@@ -8905,7 +9026,7 @@ local function startLoops()
                     local rawP = Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
                     Telemetry.smoothPing += (rawP - Telemetry.smoothPing) * 0.35
                     Telemetry.livePing = M.max(0, M.floor(Telemetry.smoothPing + 0.5))
-                    if not Runtime.RepGateOpen and not Config.FastPunch and Telemetry.livePing > 0 then
+                    if not Runtime.RepGateOpen and not Config.AutoPunch and Telemetry.livePing > 0 then
                         Telemetry.baselinePing += (Telemetry.livePing - Telemetry.baselinePing) * 0.15
                     end
                 end)
@@ -8929,7 +9050,7 @@ local function startLoops()
             end
 
             local UI = Runtime.UI
-            local hudInterval = jumpActive and 0.25 or 0.16
+            local hudInterval = jumpActive and 0.28 or 0.22
             if UI.Main and UI.Main.Visible and not Config.Minimized and (now - lastHudRefresh >= hudInterval) then
                 local hudDt = now - lastHudRefresh
                 lastHudRefresh = now
@@ -9059,30 +9180,15 @@ local function startLoops()
                     BossEngine.stepFastPunch(dt)
                 end
 
-                if Config.FastPunch then
-                    local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-                    if root then Combat.refreshTargets(root.Position, false) end
-                    local spd = M.clamp(tonumber(Config.PunchSpeed) or 60, 1, 500)
-                    local pingHeadroom = Telemetry.livePing - Telemetry.baselinePing
-                    local maxRpc = (pingHeadroom > 80) and 8 or ((pingHeadroom > 40) and 12 or 18)
-                    punchAcc += M.clamp(6 + (spd / 500) * (maxRpc - 6), 6, maxRpc) * M.min(dt, 0.05)
-
-                    local strikes = M.min(M.floor(punchAcc), 2)
-                    if strikes > 0 then
-                        punchAcc -= strikes
-                        for s = 1, strikes do
-                            if not Config.FastPunch or myToken ~= Runtime.SessionTokens.pun then break end
-                            rightHandNext = not rightHandNext
-                            if Combat.executeStrike(rightHandNext, (s == 1) and 1 or 0, s > 1, nil) then
-                                Telemetry.punchesTotal += 1; Telemetry.recordEvent(Telemetry.punchTracker, 1)
-                            end
-                        end
+                if Config.AutoPunch then
+                    if not Config.AutoKillBoss then
+                        local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+                        if root then Combat.refreshTargets(root.Position, false) end
                     end
-                elseif Config.AutoPunch then
-                    local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-                    if root then Combat.refreshTargets(root.Position, false) end
+                    local spd = M.clamp(tonumber(Config.PunchSpeed) or 60, 1, 500)
+                    local interval = M.clamp(0.20 * (60 / spd), 0.07, 0.45)
                     punchAcc += dt
-                    if punchAcc >= 0.20 then
+                    if punchAcc >= interval then
                         punchAcc = 0; rightHandNext = not rightHandNext
                         if Combat.executeStrike(rightHandNext, 1, false, nil) then
                             Telemetry.punchesTotal += 1; Telemetry.recordEvent(Telemetry.punchTracker, 1)
@@ -9109,12 +9215,12 @@ local function startLoops()
                     stepRepEngine(dt)
                 end
                 stepRebirthEngine()
-                if Config.AutoKillBoss or Config.FastPunch or Config.AutoPunch then
+                if Config.AutoKillBoss or Config.AutoPunch then
                     stepPunchEngine(dt)
                 end
                 if Config.AutoCollectRewards then
                     collectAcc += dt
-                    if collectAcc >= 2.2 then collectAcc = 0; task.spawn(RewardEngine.runAutoCollectPass) end
+                    if collectAcc >= 2.4 then collectAcc = 0; task.spawn(RewardEngine.runAutoCollectPass) end
                 elseif collectAcc ~= 0 then
                     collectAcc = 0
                 end
@@ -9149,6 +9255,7 @@ local function resetAllFeaturesToNormal()
     RewardEngine.dailyPassBusy = false
     RewardEngine.guiCacheDirty = true
     RewardEngine.workingSpinArgs = nil
+    RewardEngine.workingGiftArgs = nil
     RewardEngine.cachedWheelBtn = nil
     RewardEngine.claimedGiftCooldown = {}
     RewardEngine.claimedQuestCooldown = {}
@@ -9165,12 +9272,13 @@ local function resetAllFeaturesToNormal()
     pcall(BossEngine.returnToOrigin)
     BossEngine.evadingAOE = false; BossEngine.wasTelegraphActive = false; BossEngine.postAttackHoldUntil = 0
     BossEngine.lastAttackSeq = nil
-    BossEngine.trackedDangerInsts = setmetatable({}, {__mode = "k"}); BossEngine.lastSafeDist = 270
-    BossEngine.currentBossModel = nil; BossEngine.currentTargetObj = nil
+    BossEngine.trackedDangerInsts = setmetatable({}, {__mode = "k"}); BossEngine.lastSafeDist = 380
+    BossEngine.currentBossModel = nil; BossEngine.currentTargetObj = nil; BossEngine.noClipChar = nil
     BossEngine.prevEngagedModel = nil; BossEngine.prevEngagedHP = nil
     Perf.frameBudgetSec = 0.0016
     Perf.activeWorkers = 2
     Perf.aiSchedulerMode = "Standard"
+    pcall(CharPhysics.applyFreeze, false)
     pcall(CharPhysics.destroyFly)
     pcall(CharPhysics.setWalkOnWater, false)
     pcall(CharPhysics.applyWalkSpeed)
