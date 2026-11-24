@@ -814,18 +814,18 @@ do
                 local lowOverhead = (tonumber(Config.CycleJump) or 1) > 1 or Config.AIPerfMode or (Runtime.RepGateOpen and (Config.FastRep or Config.AIFastRep))
                 local vis = UI.Main.Visible
                 local mainVis = vis and not Config.Minimized
-                local waitDt = (not vis and 0.35) or (Config.Minimized and 0.25) or (lowOverhead and 0.12 or 0.06)
+                local waitDt = (not vis and 0.45) or (Config.Minimized and 0.35) or (lowOverhead and 0.20 or 0.10)
                 t += waitDt
                 if vis then
-                    mainStrokeGrad.Rotation = (mainStrokeGrad.Rotation + (lowOverhead and 7 or 4)) % 360
+                    mainStrokeGrad.Rotation = (mainStrokeGrad.Rotation + (lowOverhead and 10 or 6)) % 360
                     statusLED.BackgroundTransparency = 0.15 + M.abs(M.sin(t * 2.5)) * 0.55
                 end
-                if mainVis or not lowOverhead then
+                if mainVis and not lowOverhead then
                     local baseRot, pulse = (t * 210) % 360, 0.5 + 0.5 * M.sin(t * 14) * M.cos(t * 8)
                     local activeTab = Runtime.activeTabName
                     for i = 1, #Runtime.RGBLightningItems do
                         local item = Runtime.RGBLightningItems[i]
-                        if item.stroke and item.stroke.Parent and (item.pageTag == "_ALWAYS" or (mainVis and item.pageTag == activeTab)) then
+                        if item.stroke and item.stroke.Parent and (item.pageTag == "_ALWAYS" or item.pageTag == activeTab) then
                             item.grad.Rotation = (baseRot + item.phase) % 360
                             item.stroke.Thickness = item.isActive and (1.65 + pulse * 0.5) or (1.25 + pulse * 0.22)
                             item.stroke.Transparency = (item.isActive and item.activeTrans or item.baseTrans) + ((1 - pulse) * (item.isActive and 0.15 or 0.20))
@@ -3176,6 +3176,7 @@ local Combat = {
     candidateBossModels = {}, rockTargets = {}, bossTargets = {}, playerTargets = {},
     adorneeGuiByModel = setmetatable({}, {__mode = "k"}),
     activeArm = 1, swingProgress = 1, rigType = nil, joints = {}, origC0 = {},
+    rfInFlight = setmetatable({}, {__mode = "k"}),
 }
 
 local BossEngine = {
@@ -4401,7 +4402,7 @@ do
         if next(Combat.joints) == nil then return end
 
         local spd = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(tonumber(Config.PunchSpeed) or 140, 60, 500) or 35
-        local swingsPerSec = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(12 + (spd / 25), 14, 28) or 4.5
+        local swingsPerSec = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(8 + (spd / 40), 10, 18) or 4.5
         if Combat.swingProgress < 1 then Combat.swingProgress = M.min(1, Combat.swingProgress + dt * swingsPerSec) end
 
         local pulse = M.sin(M.pi * Combat.swingProgress)
@@ -4430,7 +4431,7 @@ do
 
     local function triggerVisualSwing(char, hum, tool, speedVal)
         local now = M.clock()
-        local swingsPerSec = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(12 + ((speedVal or 140) / 25), 14, 28) or 4.5
+        local swingsPerSec = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(8 + ((speedVal or 140) / 40), 10, 18) or 4.5
         if now - Combat.lastTrackTrigger < (1 / swingsPerSec) then return end
         Combat.lastTrackTrigger = now
         Combat.activeArm = -Combat.activeArm
@@ -4441,7 +4442,7 @@ do
             Combat.trackIdx = (Combat.trackIdx % #Combat.tracks) + 1
             if tr then
                 pcall(function()
-                    local animSpeed = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(swingsPerSec * 0.45, 2.5, 8.0) or 1.6
+                    local animSpeed = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(swingsPerSec * 0.35, 1.8, 4.5) or 1.6
                     if tr.IsPlaying then tr.TimePosition = 0; tr:AdjustSpeed(animSpeed)
                     else tr:Play(0, 1, animSpeed) end
                 end)
@@ -4482,7 +4483,7 @@ do
 
     function Combat.refreshTargets(rootPos, force)
         local now = M.clock()
-        local scanMinInt = (Config.AutoKillBoss or Config.FastPunch or Config.AutoPunch) and 0.20 or 0.85
+        local scanMinInt = Config.AutoKillBoss and 0.50 or ((Config.FastPunch or Config.AutoPunch) and 0.65 or 1.2)
         if not force and (now - Combat.lastTargetScan < scanMinInt) then return end
         Combat.lastTargetScan = now
 
@@ -4662,9 +4663,15 @@ do
         local dualRealBoss = focusBoss and focusBoss.hasDamageHitbox == true
         if m then
             if m:IsA("RemoteFunction") then
-                task.spawn(pcall, m.InvokeServer, m, "punch", handArg)
-                if dualRealBoss then
-                    task.spawn(pcall, m.InvokeServer, m, "punch", isRightHand and "leftHand" or "rightHand")
+                if Combat.rfInFlight[m] == nil then
+                    Combat.rfInFlight[m] = true
+                    task.spawn(function()
+                        pcall(m.InvokeServer, m, "punch", handArg)
+                        if dualRealBoss then
+                            pcall(m.InvokeServer, m, "punch", isRightHand and "leftHand" or "rightHand")
+                        end
+                        Combat.rfInFlight[m] = nil
+                    end)
                 end
             else
                 pcall(m.FireServer, m, "punch", handArg)
@@ -4676,7 +4683,14 @@ do
         if focusBoss and #Remotes.combatRemotes > 0 then
             for _, crem in ipairs(Remotes.combatRemotes) do
                 if crem and crem.Parent then
-                    if crem:IsA("RemoteFunction") then task.spawn(pcall, crem.InvokeServer, crem, focusBoss.model)
+                    if crem:IsA("RemoteFunction") then
+                        if Combat.rfInFlight[crem] == nil then
+                            Combat.rfInFlight[crem] = true
+                            task.spawn(function()
+                                pcall(crem.InvokeServer, crem, focusBoss.model)
+                                Combat.rfInFlight[crem] = nil
+                            end)
+                        end
                     else pcall(crem.FireServer, crem, focusBoss.model) end
                 end
             end
@@ -5145,7 +5159,7 @@ do
         local dangerRadius, telegraphNow, immediateNow = 0, false, false
         local inFirstHalfCharge = false
 
-        if (now - BossEngine.lastAoeCheck) >= 0.065 or now < BossEngine.aoeFlagUntil then
+        if (now - BossEngine.lastAoeCheck) >= 0.12 or now < BossEngine.aoeFlagUntil then
             BossEngine.lastAoeCheck = now
 
             pcall(function()
@@ -5827,7 +5841,7 @@ do
     end
     function BossEngine.pollPassiveStatus()
         local now = M.clock()
-        if (now - lastPassivePoll) < 1.5 then return end
+        if (now - lastPassivePoll) < 3.0 then return end
         lastPassivePoll = now
         local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
         if root then Combat.refreshTargets(root.Position, false) end
@@ -8736,7 +8750,7 @@ local function startLoops()
             end
 
             local UI = Runtime.UI
-            local hudInterval = jumpActive and 0.18 or 0.10
+            local hudInterval = jumpActive and 0.25 or 0.16
             if UI.Main and UI.Main.Visible and not Config.Minimized and (now - lastHudRefresh >= hudInterval) then
                 local hudDt = now - lastHudRefresh
                 lastHudRefresh = now
