@@ -2858,30 +2858,47 @@ do
                     return Config.Active and Config.AutoCollectRewards and myGen == Runtime.Gen and tok == Runtime.SessionTokens.rew
                 end
                 local needEventCheck = false
+                -- Prefer the live reward card when its claim button is known.
+                -- This avoids probing every guessed remote payload for a card
+                -- the UI can already claim directly.
+                for _, item in ipairs(pending) do
+                    if not isAlive() then break end
+                    if item.btn then
+                        item._guiAttempted = true
+                        if RewardEngine.fireGuiButton(item.btn) then
+                            task.wait(0.30)
+                            if not isAlive() then break end
+                            local after = scanReadyFreeGiftSlots()
+                            if after[item.idx] == nil then item._claimed = true end
+                        end
+                    end
+                end
                 for _, item in ipairs(pending) do
                     if not isAlive() then break end
                     local slotIdx, slotRef = item.idx, item.ref
-                    local claimedOk, usedEvent = false, false
-                    local attempts = buildGiftAttempts(slotIdx, slotRef)
-                    for _, rem in ipairs(giftRemotes) do
-                        if not isAlive() then break end
-                        if rem and rem.Parent then
-                            if rem:IsA("RemoteFunction") then
-                                for _, args in ipairs(attempts) do
-                                    if not isAlive() then break end
-                                    local ok, res = invokeSafe(rem, args)
-                                    if isClaimSuccess(ok, res) then
-                                        claimedOk = true
-                                        cacheGiftPayloadPattern(args, slotIdx, slotRef)
-                                        break
-                                    elseif ok and res == nil then
-                                        usedEvent = true
+                    local claimedOk, usedEvent = item._claimed == true, false
+                    if not claimedOk then
+                        local attempts = buildGiftAttempts(slotIdx, slotRef)
+                        for _, rem in ipairs(giftRemotes) do
+                            if not isAlive() then break end
+                            if rem and rem.Parent then
+                                if rem:IsA("RemoteFunction") then
+                                    for _, args in ipairs(attempts) do
+                                        if not isAlive() then break end
+                                        local ok, res = invokeSafe(rem, args)
+                                        if isClaimSuccess(ok, res) then
+                                            claimedOk = true
+                                            cacheGiftPayloadPattern(args, slotIdx, slotRef)
+                                            break
+                                        elseif ok and res == nil then
+                                            usedEvent = true
+                                        end
                                     end
+                                    if claimedOk then break end
+                                else
+                                    usedEvent = true
+                                    for _, args in ipairs(attempts) do fireSafe(rem, args) end
                                 end
-                                if claimedOk then break end
-                            else
-                                usedEvent = true
-                                for _, args in ipairs(attempts) do fireSafe(rem, args) end
                             end
                         end
                     end
@@ -2901,7 +2918,7 @@ do
 
                 for _, item in ipairs(pending) do
                     if not isAlive() then break end
-                    if not item._claimed and item.btn and RewardEngine.fireGuiButton(item.btn) then
+                    if not item._claimed and not item._guiAttempted and item.btn and RewardEngine.fireGuiButton(item.btn) then
                         task.wait(0.30)
                         if not isAlive() then break end
                         local after = scanReadyFreeGiftSlots()
@@ -3048,7 +3065,23 @@ do
             end
             local claimedLabel = (#readyDailyItems > 0 and readyDailyItems[1].label) or "Daily Reward"
             local dailyPayloads, chestPayloads = buildDailyPayloads(readyDailyItems)
-            local claimedOk = probeRemotePool(Remotes.dailyRemotes, dailyPayloads, isAlive)
+            local claimedOk = false
+            -- Prefer a visible daily claim button over broad remote guessing.
+            -- Verify the card/badge changed before counting it as collected.
+            for _, item in ipairs(readyDailyItems) do
+                if not isAlive() then break end
+                if item.btn and RewardEngine.fireGuiButton(item.btn) then
+                    task.wait(0.30)
+                    if not isAlive() then break end
+                    local remAfter = scanReadyDailyRewards()
+                    if #remAfter < #readyDailyItems
+                        or (hasDailyBadge and not hasGuiBadgeFor({"daily", "login", "streak", "calendar", "benefit"}, DAILY_EXCLUDE_KW)) then
+                        claimedOk = true
+                        break
+                    end
+                end
+            end
+            if not claimedOk and isAlive() then claimedOk = probeRemotePool(Remotes.dailyRemotes, dailyPayloads, isAlive) end
             if not claimedOk and isAlive() then claimedOk = probeRemotePool(Remotes.chestRemotes, chestPayloads, isAlive) end
             if not claimedOk and isAlive() then claimedOk = probeRemotePool(Remotes.genericRewardRemotes, dailyPayloads, isAlive) end
             if not isAlive() then
@@ -5742,7 +5775,7 @@ do
     end
 
     function BossEngine.maintainHold()
-        if not (Config.Active and Config.AutoKillBoss and BossEngine.lastHoverCF) then return end
+        if not (Config.Active and Config.AutoKillBoss and BossEngine.lastHoverCF) or BossEngine.evadingAOE then return end
         local char = Player.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if root then
@@ -5964,19 +5997,26 @@ do
             end
             BossEngine.evadingAOE = true
             BossEngine.tweenStartPos = nil
-            local safeDist = M.clamp((tonumber(aoeRadius) or 140) + 36, 150, 360)
-            BossEngine.lastSafeDist = safeDist
-            -- Evade on the current floor plane. Preserve the character's Y so
-            -- dodging never turns into an upward launch or a floating hover.
-            local escapePos = target.part.Position + (BossEngine.dodgeEscapeDir * safeDist)
-            local safePos = Vector3.new(escapePos.X, root.Position.Y, escapePos.Z)
+            -- Move out of the danger radius in short, bounded floor-level steps.
+            -- The old boss-relative 150-360 stud snap could throw the character
+            -- across small arenas, while maintainHold pinned that snap every frame.
+            local flatOffset = (root.Position - target.part.Position) * Vector3.new(1, 0, 1)
+            local desiredDist = M.clamp((tonumber(aoeRadius) or 140) + 24, 72, 132)
+            local moveRate = M.clamp((tonumber(dt) or 0.016) * 240, 0.5, 8)
+            local moveDist = M.min(M.max(desiredDist - flatOffset.Magnitude, 0), moveRate)
+            BossEngine.lastSafeDist = desiredDist
+            local safePos = Vector3.new(
+                root.Position.X + BossEngine.dodgeEscapeDir.X * moveDist,
+                root.Position.Y,
+                root.Position.Z + BossEngine.dodgeEscapeDir.Z * moveDist
+            )
             local safeCF = CFrame.new(safePos, Vector3.new(bPos.X, safePos.Y, bPos.Z))
             BossEngine.lastSafeSpot = safePos
-            BossEngine.lastHoverCF = safeCF
+            BossEngine.lastHoverCF = nil
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
-            root.CFrame = safeCF
-            BossEngine.statusText = M.fmtStr("Action: Evading boss attack (%d studs)", M.floor(safeDist))
+            if moveDist > 0.1 then root.CFrame = safeCF end
+            BossEngine.statusText = M.fmtStr("Action: Evading boss attack (%d studs)", M.floor(desiredDist))
             return
         end
 
@@ -6011,7 +6051,9 @@ do
                 BossEngine.tweenStartT = now
                 BossEngine.tweenElapsed = 0
                 BossEngine.tweenTargetModel = target.model
-                BossEngine.tweenDur = M.clamp(distToHead / 4200, 0.05, 0.16)
+                -- Keep boss approach and post-dodge return at a controlled speed;
+                -- the old 50-160 ms tween made long moves look like random flight.
+                BossEngine.tweenDur = M.clamp(distToHead / 650, 0.18, 2.0)
             end
             BossEngine.tweenElapsed = (BossEngine.tweenElapsed or 0) + M.max(dt or 0.016, 0)
             local rawA = M.max(now - BossEngine.tweenStartT, BossEngine.tweenElapsed) / M.max(BossEngine.tweenDur, 0.001)
