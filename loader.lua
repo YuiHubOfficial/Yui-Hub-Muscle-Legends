@@ -1282,11 +1282,11 @@ do
         if n:find("damage") then
             return n:find("boss") ~= nil
         end
-        if n:find("punch") or n:find("attackboss") or n:find("hitboss") or n:find("bossattack")
+        if n:find("attackboss") or n:find("hitboss") or n:find("bossattack") or n:find("punchboss")
             or n:find("bosshit") or n:find("bossevent") or n:find("bossremote") or n:find("combat") then
             return true
         end
-        return (pLow:find("combat") or gpLow:find("combat") or pLow:find("punch") or gpLow:find("punch"))
+        return (pLow:find("combat") or gpLow:find("combat") or pLow:find("boss") or gpLow:find("boss"))
             and (n:find("hit") or n:find("attack") or n:find("strike") or n:find("swing"))
     end
 
@@ -1389,7 +1389,9 @@ do
     local function seedKnownRewardRemotes(buckets)
         for _, rsDir in ipairs(ReplicatedStorage:GetChildren()) do
             if RS_SEED_DIRS[rsDir.Name:lower()] then
-                pushUnique(buckets.tList, rsDir:FindFirstChild("freeGiftClaimRemote"), true)
+                for _, tName in ipairs({"freeGiftClaimRemote", "claimFreeGiftRemote", "claimGiftRemote", "freeGiftsRemote", "freeGiftRemote", "giftClaimRemote", "playtimeRewardRemote", "timeRewardRemote"}) do
+                    pushUnique(buckets.tList, rsDir:FindFirstChild(tName), tName == "freeGiftClaimRemote")
+                end
                 pushUnique(buckets.qList, rsDir:FindFirstChild("questsEvent") or rsDir:FindFirstChild("questEvent"), true)
                 pushUnique(buckets.wList, rsDir:FindFirstChild("openFortuneWheelRemote"), true)
                 pushUnique(buckets.chList, rsDir:FindFirstChild("checkChestRemote") or rsDir:FindFirstChild("chestRemote"), true)
@@ -1562,8 +1564,9 @@ do
     local SKIP_GUI_NAMES = {Chat = true, BubbleChat = true, Freecam = true, TouchGui = true}
     local CLAIM_WORDS = {
         claim = true, collect = true, ["claim reward"] = true, ["claim daily"] = true,
-        ["collect reward"] = true, ready = true, ["ready!"] = true, ["claim!"] = true,
-        ["collect!"] = true, available = true, free = true, ["free!"] = true,
+        ["collect reward"] = true, ready = true, ["ready!"] = true, ["ready !"] = true,
+        ["claim!"] = true, ["claim !"] = true,
+        ["collect!"] = true, ["collect !"] = true, available = true, free = true, ["free!"] = true,
         ["claim free"] = true, redeem = true, ["redeem!"] = true, get = true,
         open = true, ["claim gift"] = true, ["check in"] = true, ["check-in"] = true,
         checkin = true, ["claim all"] = true, ["collect all"] = true,
@@ -1660,7 +1663,7 @@ do
             return false
         end
         if CLAIM_WORDS[tl] then return true end
-        return (tl:find("^claim") ~= nil) or (tl:find("^collect") ~= nil) or (tl:find("^redeem") ~= nil)
+        return (tl:find("^claim") ~= nil) or (tl:find("^collect") ~= nil) or (tl:find("^redeem") ~= nil) or (tl:find("^ready") ~= nil)
     end
 
     local function invokeSafe(rem, args)
@@ -1759,30 +1762,40 @@ do
         return list, pGui
     end
 
-    local function hasGuiBadgeFor(keywords, excludeKeywords)
+    local function hasGuiBadgeFor(keywords, excludeKeywords, allowClaimWord)
         local items, pGui = getCachedGuiTextItems()
         if not pGui then return false, 0 end
         for i = 1, #items do
             local entry = items[i]
             local gui, d = entry.gui, entry.inst
-            if gui.Enabled ~= false and d:IsA("TextLabel") and d.Visible and d.Text and isAncestorVisible(d, gui) then
+            if gui.Enabled ~= false and (d:IsA("TextLabel") or (allowClaimWord and d:IsA("TextButton"))) and d.Visible and d.Text and isAncestorVisible(d, gui) then
                 local t = cleanGuiText(d.Text)
                 local num = tonumber(t)
-                if t == "!" or (num and num > 0 and num <= 999) then
-                    local cur, matched, excluded = d.Parent, false, false
+                local isBadgeText = (t == "!" or (num and num > 0 and num <= 999))
+                    or (allowClaimWord and (t == "claim!" or t == "claim !" or t == "ready!" or t == "ready !"))
+                if isBadgeText then
+                    local cur, matched, excluded = d, false, false
                     for _ = 1, 6 do
                         if not cur or cur == game or cur == pGui then break end
                         local cn = cur.Name:lower()
-                        if excludeKeywords then
+                        local hasStrongKw = false
+                        for _, kw in ipairs(keywords) do
+                            if cn:find(kw, 1, true) then matched = true; hasStrongKw = true end
+                        end
+                        if excludeKeywords and not hasStrongKw and cur ~= gui then
                             for _, ex in ipairs(excludeKeywords) do
                                 if cn:find(ex, 1, true) then excluded = true; break end
                             end
                             if excluded then break end
                         end
-                        for _, kw in ipairs(keywords) do
-                            if cn:find(kw, 1, true) then matched = true end
+                        if cur == gui then
+                            if excludeKeywords then
+                                for _, ex in ipairs({"daily", "quest", "wheel", "spin", "shop", "store", "pet", "egg"}) do
+                                    if cn:find(ex, 1, true) then excluded = true; break end
+                                end
+                            end
+                            break
                         end
-                        if cur == gui then break end
                         cur = cur.Parent
                     end
                     if matched and not excluded then return true, num or 1 end
@@ -1809,15 +1822,24 @@ do
         local cur = inst
         while cur and cur ~= game do
             local nl = cur.Name:lower()
-            for _, kw in ipairs(excludeKws) do
-                if kw ~= "reward" and kw ~= "rewards" and nl:find(kw, 1, true) then return true end
+            local isExplicitGift = (nl:find("freegift", 1, true) or nl:find("timegift", 1, true) or nl:find("playtime", 1, true) or nl:find("timereward", 1, true)) ~= nil
+            if cur == stopGui then
+                for _, strictKw in ipairs({"daily", "quest", "wheel", "spin", "shop", "store", "pet", "egg"}) do
+                    for _, kw in ipairs(excludeKws) do
+                        if kw == strictKw and nl:find(kw, 1, true) then return true end
+                    end
+                end
+                break
+            elseif not isExplicitGift then
+                for _, kw in ipairs(excludeKws) do
+                    if kw ~= "reward" and kw ~= "rewards" and nl:find(kw, 1, true) then return true end
+                end
             end
             if excludeDayNames then
                 if nl:find("^day%s*[_%-]?%d+") or nl:find("^days?$") or nl:find("daysgrid") or nl:find("dayslist") then
                     return true
                 end
             end
-            if cur == stopGui then break end
             cur = cur.Parent
         end
         return false
@@ -2063,13 +2085,15 @@ do
         if isSingleCardSlotName(nl) then
             return false
         end
-        local cardCount, subBtnContainers = 0, 0
+        local cardCount, subBtnContainers, directGuiBtns, cardLikeFrames = 0, 0, 0, 0
         for _, ch in ipairs(inst:GetChildren()) do
             local cn = ch.Name:lower()
             if cn:find("day%s*[_%-]?%d+") or cn:find("reward%s*[_%-]?%d+") or cn:find("slot%s*[_%-]?%d+")
                 or cn:find("gift%s*[_%-]?%d+") or cn:find("card%s*[_%-]?%d+") or cn:find("item%s*[_%-]?%d+") then
                 cardCount += 1
             elseif ch:IsA("GuiButton") then
+                directGuiBtns += 1
+                if directGuiBtns >= 2 then return true end
                 if cn:find("^%d+$") or cn:find("^btn%s*[_%-]?%d+") or cn:find("^button%s*[_%-]?%d+") then
                     cardCount += 1
                 elseif isDailyGuiElementMatch(ch) then
@@ -2082,6 +2106,12 @@ do
                 if ct:find("%d+%s*/%s*%d+.*claimed") or ct:find("gifts%s+claimed") or ct:find("get free rewards") then
                     return true
                 end
+            elseif (ch:IsA("Frame") or ch:IsA("ImageLabel")) and not ch:IsA("GuiButton") then
+                local hasLbl = ch:FindFirstChildWhichIsA("TextLabel") or ch:FindFirstChildWhichIsA("TextButton")
+                if hasLbl then
+                    cardLikeFrames += 1
+                    if cardLikeFrames >= 3 then return true end
+                end
             end
             if (not ch:IsA("GuiButton")) and ch:FindFirstChildWhichIsA("GuiButton", true) then
                 subBtnContainers += 1
@@ -2093,7 +2123,7 @@ do
 
     local function findCardScope(d, gui)
         local scanScope = d
-        for _ = 1, 3 do
+        for _ = 1, 5 do
             local par = scanScope.Parent
             if not par or par == gui or par:IsA("ScrollingFrame") or par:FindFirstChildOfClass("UIGridLayout") or isMultiCardContainer(par) then
                 break
@@ -2227,7 +2257,7 @@ do
                             local btnRef = findGiftCardButton(d, scanScope)
                             if not isCardBlocked(scanScope, btnRef, true) then
                                 local slotNum, cur = nil, d
-                                for _ = 1, 4 do
+                                for _ = 1, 5 do
                                     if not cur or cur == gui then break end
                                     local num = tonumber(cur.Name:match("(%d+)"))
                                     if num and num >= 1 and num <= 24 then slotNum = num; break end
@@ -2642,13 +2672,17 @@ do
     local function buildGiftAttempts(slotIdx, slotRef)
         local sStr = tostring(slotIdx)
         local gStr = "Gift " .. sStr
+        local gLow = "gift" .. sStr
         local attempts = {
             {"claimGift", slotIdx},
             {"claimGift", sStr},
             {"claimGift", gStr},
+            {"claimGift", gLow},
             {slotIdx},
             {gStr},
             {"claimFreeGift", slotIdx},
+            {"claimFreeGift", gStr},
+            {"claimTimeGift", slotIdx},
             {"claim", slotIdx},
         }
         if typeof(slotRef) == "Instance" then
@@ -2657,10 +2691,15 @@ do
         return attempts
     end
 
+    local function hasTimeGiftBadge()
+        return hasGuiBadgeFor({"gift", "time", "freegift", "playtime", "benefit", "claim", "reward"}, TIME_GIFT_EXCLUDE_KW, false)
+            or hasGuiBadgeFor({"gift", "time", "freegift", "playtime", "timegift", "timereward", "benefit", "reward"}, TIME_GIFT_EXCLUDE_KW, true)
+    end
+
     local function collectTimeGifts(now)
         if RewardEngine.giftPassBusy then return end
         local readySlots, btnMap = scanReadyFreeGiftSlots()
-        local hasClaimBadge = hasGuiBadgeFor({"gift", "time", "freegift", "playtime", "benefit", "claim", "reward"}, TIME_GIFT_EXCLUDE_KW)
+        local hasClaimBadge = hasTimeGiftBadge()
         local hasReadySlot = next(readySlots) ~= nil
         if not hasReadySlot and not hasClaimBadge then return end
         local myGen, tok = Runtime.Gen, Runtime.SessionTokens.rew
@@ -2700,7 +2739,8 @@ do
                                 for _, args in ipairs(attempts) do
                                     if not isAlive() then break end
                                     local ok, res = invokeSafe(rem, args)
-                                    if isClaimSuccess(ok, res) then claimedOk = true; break end
+                                    if isClaimSuccess(ok, res) then claimedOk = true; break
+                                    elseif ok and res == nil then usedEvent = true end
                                 end
                                 if claimedOk then break end
                             else
@@ -2753,6 +2793,7 @@ do
                 local function isAlive()
                     return Config.Active and Config.AutoCollectRewards and myGen == Runtime.Gen and tok == Runtime.SessionTokens.rew
                 end
+                local anyServerProbe, claimedCountThisPass = false, 0
                 for _, slotIdx in ipairs(badgeSlots) do
                     if not isAlive() then break end
                     local attempts = buildGiftAttempts(slotIdx, nil)
@@ -2765,20 +2806,31 @@ do
                                     if not isAlive() then break end
                                     local ok, res = invokeSafe(rem, args)
                                     if isClaimSuccess(ok, res) then
+                                        claimedCountThisPass += 1
                                         RewardEngine.collectedCount += 1
                                         RewardEngine.lastRewardLabel = "Time Gift #" .. tostring(slotIdx)
                                         claimedSlot = true
                                         break
+                                    elseif ok and res == nil then
+                                        anyServerProbe = true
                                     end
                                 end
                                 if claimedSlot then break end
                             else
+                                anyServerProbe = true
                                 for _, args in ipairs(attempts) do
                                     if not isAlive() then break end
                                     fireSafe(rem, args)
                                 end
                             end
                         end
+                    end
+                end
+                if claimedCountThisPass == 0 and anyServerProbe and isAlive() then
+                    task.wait(0.35)
+                    if isAlive() and not hasTimeGiftBadge() then
+                        RewardEngine.collectedCount += 1
+                        RewardEngine.lastRewardLabel = "Time Gift"
                     end
                 end
                 if myGen == Runtime.Gen and tok == Runtime.SessionTokens.rew then RewardEngine.giftPassBusy = false end
@@ -3273,11 +3325,18 @@ do
     local ANCESTOR_SKIP_KW = {"pets", "eggs", "rocks", "machines", "leaderboard", "statue", "shop", "quest", "portal"}
     local ROCK_KW = {"rock", "stone", "boulder", "punching", "crystal", "meteor", "jungle", "legends", "king", "inferno", "mystic", "frozen", "golden"}
     local BOSS_FOLDER_KW = {"boss", "bosses", "activeboss", "eventboss", "alienboss", "bossevent", "bossarena", "raid", "raids"}
-    local BOSS_CS_TAGS = {"BossEventBoss", "Boss", "EventBoss", "ActiveBoss", "Enemy"}
+    local BOSS_CS_TAGS = {"BossEventBoss", "AlienBoss", "Boss", "EventBoss", "ActiveBoss", "Enemy"}
     local PURE_SKIP_FOLDERS = {
         "pets", "eggs", "vfx", "debris", "trees", "water", "clouds", "effects", "particles",
         "building", "buildings", "decor", "props", "road", "roads", "shop", "shops",
         "leaderboard", "leaderboards", "statue", "statues", "rocks", "machines", "weights", "bench", "treadmill"
+    }
+    local EXACT_SKIP_MODELS = {
+        map = true, world = true, islands = true, island = true, city = true, terrain = true,
+        scenery = true, lobby = true, spawn = true, spawns = true, gyms = true, gym = true,
+        decor = true, decorations = true, props = true, buildings = true, roads = true,
+        lighting = true, scriptables = true, water = true, clouds = true, rocks = true,
+        machinesfolder = true, machines = true, pets = true, eggs = true, shops = true, shop = true,
     }
     local AOE_KW = {
         "aoe", "ult", "ultimate", "shockwave", "slam", "warning", "danger", "blast",
@@ -3449,20 +3508,29 @@ do
     local function hasBossEventTag(model)
         if not (CollectionService and model) then return false end
         local okT, hasT = pcall(CollectionService.HasTag, CollectionService, model, "BossEventBoss")
-        return okT and hasT == true
+        if okT and hasT == true then return true end
+        local okA, hasA = pcall(CollectionService.HasTag, CollectionService, model, "AlienBoss")
+        return okA and hasA == true
     end
 
     local function isRealBossEventModel(model)
         if not model then return false end
-        if hasBossEventTag(model) or model:FindFirstChild("BossDamageHitbox", true) ~= nil or getBossEventModelMeta(model.Name) ~= nil then
+        if hasBossEventTag(model) or model:FindFirstChild("BossDamageHitbox") ~= nil or getBossEventModelMeta(model.Name) ~= nil then
             return true
         end
         local p = model.Parent
         if p and p ~= workspace then
             local pl = p.Name:lower()
-            if pl == "bossevent" or pl == "bossarena" then return true end
+            if pl == "bossevent" or pl == "bossarena" or pl == "alienboss" then return true end
             local gp = p.Parent
             if gp and gp ~= workspace and gp.Name:lower() == "events" then return true end
+        end
+        local nl = model.Name:lower()
+        if not EXACT_SKIP_MODELS[nl] and not hasPatternKw(nl, STRICT_PROP_SKIP_KW) then
+            if model:FindFirstChildOfClass("Humanoid") or model:FindFirstChildOfClass("AnimationController")
+                or model:FindFirstChild("stats") or model:FindFirstChild("Stats") or model:GetAttribute("Health") ~= nil then
+                if model:FindFirstChild("BossDamageHitbox", true) ~= nil then return true end
+            end
         end
         return false
     end
@@ -3479,15 +3547,23 @@ do
         end
 
         local nLow = obj.Name:lower()
-        local isRealEventBoss = hasBossEventTag(obj) or (obj:FindFirstChild("BossDamageHitbox", true) ~= nil)
-        local isExplicitBossAttr = isRealEventBoss or (obj:GetAttribute("IsBoss") == true) or (obj:GetAttribute("Boss") == true)
-        local ownTitleBoss = hasKw(nLow, BOSS_TITLE_KW) or hasKw(nLow, EVENT_BOSS_KW) or isExplicitBossAttr
-
-        if hasPatternKw(nLow, STRICT_PROP_SKIP_KW) and not isRealEventBoss then
+        local hasEventTag = hasBossEventTag(obj)
+        if EXACT_SKIP_MODELS[nLow] and not hasEventTag and obj:GetAttribute("IsBoss") ~= true and obj:GetAttribute("Boss") ~= true then
             excludedModelCache[obj] = true
             return true
         end
-        if (nLow:find("arena", 1, true) or nLow == "map" or nLow == "world" or nLow:find("gym", 1, true)) and not ownTitleBoss then
+        if hasPatternKw(nLow, STRICT_PROP_SKIP_KW) and not hasEventTag and obj:FindFirstChild("BossDamageHitbox") == nil then
+            excludedModelCache[obj] = true
+            return true
+        end
+
+        local inBossArena = hasArenaOrBossAncestor(obj)
+        local isRealEventBoss = hasEventTag or (obj:FindFirstChild("BossDamageHitbox") ~= nil)
+            or (inBossArena and obj:FindFirstChild("BossDamageHitbox", true) ~= nil)
+        local isExplicitBossAttr = isRealEventBoss or (obj:GetAttribute("IsBoss") == true) or (obj:GetAttribute("Boss") == true)
+        local ownTitleBoss = hasKw(nLow, BOSS_TITLE_KW) or hasKw(nLow, EVENT_BOSS_KW) or isExplicitBossAttr
+
+        if (nLow:find("arena", 1, true) or nLow:find("gym", 1, true)) and not ownTitleBoss then
             excludedModelCache[obj] = true
             return true
         end
@@ -3496,8 +3572,10 @@ do
             return true
         end
 
-        local inBossArena = hasArenaOrBossAncestor(obj) or isRealEventBoss
+        inBossArena = inBossArena or isRealEventBoss
         local hasCreatureRig = isRealEventBoss
+            or (obj:FindFirstChildOfClass("Humanoid") ~= nil)
+            or (obj:FindFirstChildOfClass("AnimationController") ~= nil)
             or (obj:FindFirstChildWhichIsA("Humanoid", true) ~= nil)
             or (obj:FindFirstChildWhichIsA("AnimationController", true) ~= nil)
             or hasLimbAnatomy(obj)
@@ -3507,7 +3585,7 @@ do
             return true
         end
 
-        if not isRealEventBoss and (obj:FindFirstChildWhichIsA("ProximityPrompt", true) or obj:FindFirstChildWhichIsA("ClickDetector", true)) then
+        if not isRealEventBoss and not ownTitleBoss and (obj:FindFirstChildWhichIsA("ProximityPrompt", true) or obj:FindFirstChildWhichIsA("ClickDetector", true)) then
             excludedModelCache[obj] = true
             return true
         end
@@ -3548,7 +3626,7 @@ do
     local function getModelBodyStats(model)
         local now = M.clock()
         local cached = cachedBodyStats[model]
-        local ttl = Config.AutoKillBoss and 1.2 or 2.5
+        local ttl = (Config.AutoKillBoss and BossEngine.currentBossModel == model) and 2.5 or 8.0
         if cached and (now - cached.t < ttl) then
             return cached.res
         end
@@ -3704,7 +3782,7 @@ do
             end
             cachedGuiBarLbl = nil
         end
-        if (now - lastGuiBarScan) < 2.0 and cachedGuiBarWantEv == wantEvent then
+        if (now - lastGuiBarScan) < 4.0 and cachedGuiBarWantEv == wantEvent then
             return cachedGuiBarHp, cachedGuiBarMax
         end
         lastGuiBarScan = now; cachedGuiBarWantEv = wantEvent; cachedGuiBarHp = 0; cachedGuiBarMax = 0
@@ -4017,7 +4095,7 @@ do
 
     local function readExternalBossTierMeta(isEvent)
         local now = M.clock()
-        if not isEvent and (now - lastExtMetaScan < 1.5) and cachedExtMeta ~= "" then
+        if not isEvent and (now - lastExtMetaScan < 5.0) and cachedExtMeta ~= "" then
             return cachedExtMeta
         end
         local tierParts = {}
@@ -4090,7 +4168,8 @@ do
     local function buildBossSearchTag(model, hum)
         local now = M.clock()
         local cached = cachedBossTags[model]
-        if cached and (now - cached.t < 2.0) then
+        local ttl = (Config.AutoKillBoss and BossEngine.currentBossModel == model) and 2.5 or 8.0
+        if cached and (now - cached.t < ttl) then
             return cached.tag, cached.hasFractionBar, cached.isEvent, cached.tierWord, cached.ancBossCont
         end
 
@@ -4429,22 +4508,24 @@ do
         end
     end
 
+    local lastAnimPlay = 0
     local function triggerVisualSwing(char, hum, tool, speedVal)
         local now = M.clock()
-        local swingsPerSec = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(8 + ((speedVal or 140) / 40), 10, 18) or 4.5
+        local swingsPerSec = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(5 + ((speedVal or 140) / 100), 6, 10) or 4.5
         if now - Combat.lastTrackTrigger < (1 / swingsPerSec) then return end
         Combat.lastTrackTrigger = now
         Combat.activeArm = -Combat.activeArm
         Combat.swingProgress = 0.01
+        if now - lastAnimPlay < 0.30 then return end
+        lastAnimPlay = now
         ensureAnimsLoaded(char, hum, tool)
         if #Combat.tracks > 0 then
             local tr = Combat.tracks[Combat.trackIdx]
             Combat.trackIdx = (Combat.trackIdx % #Combat.tracks) + 1
-            if tr then
+            if tr and not tr.IsPlaying then
                 pcall(function()
-                    local animSpeed = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(swingsPerSec * 0.35, 1.8, 4.5) or 1.6
-                    if tr.IsPlaying then tr.TimePosition = 0; tr:AdjustSpeed(animSpeed)
-                    else tr:Play(0, 1, animSpeed) end
+                    local animSpeed = (Config.FastPunch or Config.AutoKillBoss) and M.clamp(swingsPerSec * 0.28, 1.5, 2.8) or 1.5
+                    tr:Play(0.05, 1, animSpeed)
                 end)
             end
         end
@@ -4453,28 +4534,32 @@ do
     -- Deep Unblocked Boss Discovery (Pruned + Memoized for Zero Boss-Tab Lag)
     local function scanFastRealBossSources()
         if CollectionService then
-            local okT, tagged = pcall(CollectionService.GetTagged, CollectionService, "BossEventBoss")
-            if okT and tagged then
-                for _, inst in ipairs(tagged) do
-                    local m = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
-                    if m and not isExcludedModel(m) then Combat.candidateBossModels[m] = true end
+            for _, tagName in ipairs({"BossEventBoss", "AlienBoss"}) do
+                local okT, tagged = pcall(CollectionService.GetTagged, CollectionService, tagName)
+                if okT and tagged then
+                    for _, inst in ipairs(tagged) do
+                        local m = inst:IsA("Model") and inst or inst:FindFirstAncestorOfClass("Model")
+                        if m and not isExcludedModel(m) then Combat.candidateBossModels[m] = true end
+                    end
                 end
             end
         end
         for _, ch in ipairs(workspace:GetChildren()) do
-            if ch:IsA("Model") and isRealBossEventModel(ch) and not isExcludedModel(ch) then
+            if ch:IsA("Model") and not isExcludedModel(ch) and isRealBossEventModel(ch) then
                 Combat.candidateBossModels[ch] = true
             end
         end
-        local evRoot = workspace:FindFirstChild("Events")
-        if evRoot then
-            for _, ch in ipairs(evRoot:GetChildren()) do
-                if ch:IsA("Model") then
-                    if not isExcludedModel(ch) and modelHasHpSignal(ch) then Combat.candidateBossModels[ch] = true end
-                end
-                for _, sub in ipairs(ch:GetChildren()) do
-                    if sub:IsA("Model") and not isExcludedModel(sub) and modelHasHpSignal(sub) then
-                        Combat.candidateBossModels[sub] = true
+        for _, dirName in ipairs({"Events", "bossMaps", "BossMaps", "BossArena", "EventArena", "Bosses", "BossEvent"}) do
+            local evRoot = workspace:FindFirstChild(dirName)
+            if evRoot then
+                for _, ch in ipairs(evRoot:GetChildren()) do
+                    if ch:IsA("Model") then
+                        if not isExcludedModel(ch) and modelHasHpSignal(ch) then Combat.candidateBossModels[ch] = true end
+                    end
+                    for _, sub in ipairs(ch:GetChildren()) do
+                        if sub:IsA("Model") and not isExcludedModel(sub) and modelHasHpSignal(sub) then
+                            Combat.candidateBossModels[sub] = true
+                        end
                     end
                 end
             end
@@ -4483,55 +4568,71 @@ do
 
     function Combat.refreshTargets(rootPos, force)
         local now = M.clock()
-        local scanMinInt = Config.AutoKillBoss and 0.50 or ((Config.FastPunch or Config.AutoPunch) and 0.65 or 1.2)
+        local scanMinInt = Config.AutoKillBoss and 0.65 or ((Config.FastPunch or Config.AutoPunch) and 1.25 or 2.2)
         if not force and (now - Combat.lastTargetScan < scanMinInt) then return end
         Combat.lastTargetScan = now
 
         scanFastRealBossSources()
 
-        local deepInt = Config.AutoKillBoss and ((#Combat.bossTargets == 0) and 2.2 or 8.0) or 5.5
+        local deepInt = Config.AutoKillBoss and ((#Combat.bossTargets == 0) and 3.0 or 10.0) or ((Config.FastPunch or Config.AutoPunch) and 8.0 or 12.0)
         local needDeep = force or (now - Combat.lastDeepScan >= deepInt)
         local skipRocks = (Config.AutoKillBoss == true)
+        local skipBossWalk = (not Config.AutoKillBoss and (Config.FastPunch or Config.AutoPunch) and not force)
         local newRocks = (needDeep and not skipRocks) and {} or Combat.rockTargets
 
         if needDeep then
             Combat.lastDeepScan = now
 
-            for _, guiRoot in ipairs({workspace, Player:FindFirstChildOfClass("PlayerGui")}) do
-                if guiRoot then
-                    for _, bb in ipairs(guiRoot:GetChildren()) do
-                        if bb:IsA("BillboardGui") and bb.Adornee and bb.Adornee.Parent then
-                            local hostModel = bb.Adornee:IsA("Model") and bb.Adornee or bb.Adornee:FindFirstAncestorOfClass("Model")
-                            if hostModel and not isExcludedModel(hostModel) then
-                                Combat.adorneeGuiByModel[hostModel] = bb
-                                Combat.candidateBossModels[hostModel] = true
+            if not skipBossWalk then
+                for _, guiRoot in ipairs({workspace, Player:FindFirstChildOfClass("PlayerGui")}) do
+                    if guiRoot then
+                        for _, bb in ipairs(guiRoot:GetChildren()) do
+                            if bb:IsA("BillboardGui") and bb.Adornee and bb.Adornee.Parent then
+                                local hostModel = bb.Adornee:IsA("Model") and bb.Adornee or bb.Adornee:FindFirstAncestorOfClass("Model")
+                                if hostModel and not isExcludedModel(hostModel) then
+                                    Combat.adorneeGuiByModel[hostModel] = bb
+                                    Combat.candidateBossModels[hostModel] = true
+                                end
                             end
+                        end
+                    end
+                end
+
+                if CollectionService then
+                    for _, tName in ipairs(BOSS_CS_TAGS) do
+                        local okT, tagged = pcall(CollectionService.GetTagged, CollectionService, tName)
+                        if okT and tagged then
+                            for _, inst in ipairs(tagged) do Combat.registerCandidateModel(inst) end
                         end
                     end
                 end
             end
 
-            if CollectionService then
-                for _, tName in ipairs(BOSS_CS_TAGS) do
-                    local okT, tagged = pcall(CollectionService.GetTagged, CollectionService, tName)
-                    if okT and tagged then
-                        for _, inst in ipairs(tagged) do Combat.registerCandidateModel(inst) end
-                    end
-                end
-            end
-
             local function walkWorkspace(container, depth, inBossZone)
-                local maxD = inBossZone and 7 or 4
+                local maxD = inBossZone and 6 or 3
                 if depth > maxD then return end
                 for _, child in ipairs(container:GetChildren()) do
                     if child ~= Player.Character and not child:IsA("Terrain") and not child:IsA("Camera") then
                         local cl = child.Name:lower()
                         local childInZone = inBossZone or cl == "events" or cl:find("arena", 1, true) or hasKw(cl, BOSS_FOLDER_KW) or hasKw(cl, EVENT_BOSS_KW)
-                        if child:IsA("Model") then
+                        if not childInZone and EXACT_SKIP_MODELS[cl] then
+                            if cl == "rocks" or cl == "machinesfolder" or cl == "machines" then
+                                if not skipRocks then
+                                    for _, obj in ipairs(child:GetChildren()) do
+                                        if obj:IsA("Model") and hasKw(obj.Name:lower(), ROCK_KW) then
+                                            local tp = obj:FindFirstChildWhichIsA("BasePart")
+                                            if tp then newRocks[#newRocks + 1] = {part = tp, dist = (tp.Position - rootPos).Magnitude} end
+                                        elseif obj:IsA("BasePart") and obj:FindFirstChildOfClass("TouchTransmitter") then
+                                            newRocks[#newRocks + 1] = {part = obj, dist = (obj.Position - rootPos).Magnitude}
+                                        end
+                                    end
+                                end
+                            end
+                        elseif child:IsA("Model") then
                             if isPetModel(child) or Players:GetPlayerFromCharacter(child) then
                                 -- never target pets or player avatars
                             else
-                                if not isExcludedModel(child) and modelHasHpSignal(child) then
+                                if not skipBossWalk and not isExcludedModel(child) and modelHasHpSignal(child) then
                                     Combat.candidateBossModels[child] = true
                                 elseif not skipRocks and (hasPatternKw(cl, SCENERY_ONLY_SKIP_KW) or (cl:find("rock", 1, true) and not cl:find("boss", 1, true) and not cl:find("golem", 1, true))) then
                                     if hasKw(cl, ROCK_KW) and not cl:find("gym", 1, true) and not cl:find("arena", 1, true) then
@@ -4539,7 +4640,7 @@ do
                                         if tp then newRocks[#newRocks + 1] = {part = tp, dist = (tp.Position - rootPos).Magnitude} end
                                     end
                                 end
-                                if not child:FindFirstChildOfClass("Humanoid") and not hasKw(cl, PURE_SKIP_FOLDERS) and not (not childInZone and hasPatternKw(cl, STRICT_PROP_SKIP_KW)) then
+                                if not skipBossWalk and not child:FindFirstChildOfClass("Humanoid") and not hasKw(cl, PURE_SKIP_FOLDERS) and not (not childInZone and hasPatternKw(cl, STRICT_PROP_SKIP_KW)) then
                                     walkWorkspace(child, depth + 1, childInZone)
                                 end
                             end
@@ -4551,10 +4652,11 @@ do
                                             local tp = obj:FindFirstChildWhichIsA("BasePart")
                                             if tp then newRocks[#newRocks + 1] = {part = tp, dist = (tp.Position - rootPos).Magnitude} end
                                         elseif obj:IsA("BasePart") and obj:FindFirstChildOfClass("TouchTransmitter") then
-                                            newRocks[#newRocks + 1] = {part = obj, dist = (obj.Position - rootPos).Magnitude} end
+                                            newRocks[#newRocks + 1] = {part = obj, dist = (obj.Position - rootPos).Magnitude}
+                                        end
                                     end
                                 end
-                            elseif not hasKw(cl, PURE_SKIP_FOLDERS) then
+                            elseif not skipBossWalk and not hasKw(cl, PURE_SKIP_FOLDERS) then
                                 walkWorkspace(child, depth + 1, childInZone)
                             end
                         elseif not skipRocks and depth == 1 and child:IsA("BasePart") and child:FindFirstChildOfClass("TouchTransmitter") and hasKw(cl, ROCK_KW) then
@@ -4632,6 +4734,10 @@ do
         local root = char and char:FindFirstChild("HumanoidRootPart")
         if not (hum and hum.Health > 0 and root) then return false end
 
+        local handArg = isRightHand and "rightHand" or "leftHand"
+        if Remotes.lastScan < 0 then Remotes.refresh(false) end
+        local m = Remotes.getPrimaryMuscle()
+
         local tool = getCachedPunchTool()
         if tool then
             if tool.Parent ~= char then
@@ -4639,11 +4745,11 @@ do
                 if tool.Parent ~= char then pcall(function() tool.Parent = char end) end
             end
             local now = M.clock()
-            local actCd = focusBoss and 0.07 or 0.035
+            local actCd = focusBoss and 0.16 or 0.22
             if now - lastActivate >= actCd then
                 lastActivate = now
                 pcall(tool.Activate, tool)
-                if not focusBoss then
+                if not focusBoss and not m then
                     for _, rem in ipairs(Remotes.toolRemotes) do
                         if rem and rem.Parent and (rem == tool or rem:IsDescendantOf(tool)) then
                             if rem:IsA("RemoteFunction") then task.spawn(pcall, rem.InvokeServer, rem)
@@ -4657,9 +4763,6 @@ do
             triggerVisualSwing(char, hum, tool, (focusBoss or Config.FastPunch) and M.max(tonumber(Config.PunchSpeed) or 140, focusBoss and 160 or 60) or 40)
         end
 
-        local handArg = isRightHand and "rightHand" or "leftHand"
-        if Remotes.lastScan < 0 then Remotes.refresh(false) end
-        local m = Remotes.getPrimaryMuscle()
         local dualRealBoss = focusBoss and focusBoss.hasDamageHitbox == true
         if m then
             if m:IsA("RemoteFunction") then
@@ -4675,7 +4778,7 @@ do
                 end
             else
                 pcall(m.FireServer, m, "punch", handArg)
-                if dualRealBoss then
+                if dualRealBoss and not skipAnim then
                     pcall(m.FireServer, m, "punch", isRightHand and "leftHand" or "rightHand")
                 end
             end
@@ -4705,14 +4808,17 @@ do
             local hitter = limb or handle or root
             if hitter and hitter:IsA("BasePart") then
                 local bObj = focusBoss or Combat.bossTargets[1]
-                local waitTweenArr = (Config.AutoKillBoss and BossEngine.tweenStartPos ~= nil)
-                if not waitTweenArr and bObj and bObj.model and bObj.model.Parent then
+                local bInReach = false
+                if bObj and bObj.part and bObj.part.Parent then
+                    bInReach = ((bObj.part.Position - root.Position).Magnitude <= (focusBoss and 38 or 35))
+                end
+                if bInReach and bObj and bObj.model and bObj.model.Parent then
                     local _, curHP = readBossHealth(bObj.model, bObj.bodyStats)
-                    if curHP > 0 and bObj.part and bObj.part.Parent then
+                    if curHP > 0 then
                         local hitParts = bObj.hitParts
                         local pCount = #hitParts
                         if pCount > 0 then
-                            local maxHits = (focusBoss and dualRealBoss) and M.min(pCount, M.max(touchCount, 3)) or touchCount
+                            local maxHits = focusBoss and M.min(pCount, 2) or 1
                             for b = 1, maxHits do
                                 local tgt = hitParts[((b - 1) % pCount) + 1]
                                 if tgt and tgt.Parent then
@@ -4720,15 +4826,14 @@ do
                                     if isRealHb then
                                         pcall(firetouchinterest, tgt, hitter, 0)
                                         pcall(firetouchinterest, tgt, hitter, 1)
-                                        if dualRealBoss and otherLimb and otherLimb:IsA("BasePart") then
+                                        if focusBoss and otherLimb and otherLimb:IsA("BasePart") then
                                             pcall(firetouchinterest, tgt, otherLimb, 0)
                                             pcall(firetouchinterest, tgt, otherLimb, 1)
-                                            pcall(firetouchinterest, otherLimb, tgt, 0)
-                                            pcall(firetouchinterest, otherLimb, tgt, 1)
                                         end
+                                    else
+                                        pcall(firetouchinterest, hitter, tgt, 0)
+                                        pcall(firetouchinterest, hitter, tgt, 1)
                                     end
-                                    pcall(firetouchinterest, hitter, tgt, 0)
-                                    pcall(firetouchinterest, hitter, tgt, 1)
                                 end
                             end
                         end
@@ -4736,12 +4841,12 @@ do
                 end
                 if not focusBoss then
                     local rock = Combat.rockTargets[1]
-                    if rock and rock.part and rock.part.Parent then
+                    if rock and rock.part and rock.part.Parent and (rock.part.Position - root.Position).Magnitude <= 22 then
                         pcall(firetouchinterest, hitter, rock.part, 0)
                         pcall(firetouchinterest, hitter, rock.part, 1)
                     end
                     local plrTgt = Combat.playerTargets[1]
-                    if plrTgt and plrTgt.dist <= 25 and plrTgt.hum and plrTgt.hum.Health > 0 and plrTgt.part and plrTgt.part.Parent then
+                    if plrTgt and plrTgt.dist <= 22 and plrTgt.hum and plrTgt.hum.Health > 0 and plrTgt.part and plrTgt.part.Parent then
                         pcall(firetouchinterest, hitter, plrTgt.part, 0)
                         pcall(firetouchinterest, hitter, plrTgt.part, 1)
                     end
@@ -4840,6 +4945,22 @@ do
         BossEngine.lastTimerScan = now
 
         local despawnFound, nextSpawnFound = nil, nil
+        local okSrvT, srvNowT = pcall(function() return workspace:GetServerTimeNow() end)
+        local srvClock = (okSrvT and type(srvNowT) == "number") and srvNowT or os.time()
+        local wsNextTs = tonumber(workspace:GetAttribute("BossSpawnNextTime"))
+        if wsNextTs and wsNextTs > 1e8 then
+            nextSpawnFound = fmtClockToken(M.max(0, wsNextTs - srvClock))
+        end
+        if not nextSpawnFound and CollectionService then
+            local okSp, spList = pcall(CollectionService.GetTagged, CollectionService, "AlienBossSpawn")
+            if okSp and spList and spList[1] then
+                local alTs = tonumber(spList[1]:GetAttribute("AlienBossRespawnAt"))
+                if alTs and alTs > 1e8 then
+                    nextSpawnFound = fmtClockToken(M.max(0, alTs - srvClock))
+                end
+            end
+        end
+
         if cachedTimerDespawn and cachedTimerDespawn.Parent then
             if cachedTimerDespawn:IsA("TextLabel") then
                 local df = extractDespawnAndNextFromText(cachedTimerDespawn.Text or "")
@@ -4850,7 +4971,7 @@ do
             end
             if not despawnFound then cachedTimerDespawn = nil end
         end
-        if cachedTimerNext and cachedTimerNext.Parent then
+        if not nextSpawnFound and cachedTimerNext and cachedTimerNext.Parent then
             if cachedTimerNext:IsA("TextLabel") then
                 local _, nf = extractDespawnAndNextFromText(cachedTimerNext.Text or "")
                 nextSpawnFound = nf or extractTimerFromText((cachedTimerNext.Text or ""):gsub("<[^>]+>", " "))
@@ -4888,9 +5009,17 @@ do
             end
         end
 
-        if (not despawnFound or not nextSpawnFound) and (now - lastGuiTimerScan >= 8.0) then
+        if (not despawnFound or not nextSpawnFound) and (now - lastGuiTimerScan >= 12.0) then
             lastGuiTimerScan = now
-            local timerRoots = {ReplicatedStorage, workspace}
+            local timerRoots = {ReplicatedStorage}
+            for ak, av in pairs(workspace:GetAttributes()) do
+                local al = tostring(ak):lower()
+                if (al:find("despawn") or al:find("timeleft") or al:find("bosstimer")) and not despawnFound then
+                    despawnFound = parseTimerValue(av) or despawnFound
+                elseif (al:find("spawn") or al:find("nextboss") or al:find("cooldown")) and not nextSpawnFound then
+                    nextSpawnFound = parseTimerValue(av) or nextSpawnFound
+                end
+            end
             local wsEvFolder = workspace:FindFirstChild("Events")
             if wsEvFolder then
                 timerRoots[#timerRoots + 1] = wsEvFolder
@@ -4898,7 +5027,7 @@ do
                     timerRoots[#timerRoots + 1] = sub
                 end
             end
-            for _, fn in ipairs({"bossMaps", "BossMaps", "EventArena", "BossArena", "Arena", "Bosses", "EventBoss", "AlienEvent", "BossInfo", "CurrentBoss", "BossData"}) do
+            for _, fn in ipairs({"bossMaps", "BossMaps", "EventArena", "BossArena", "Arena", "Bosses", "EventBoss", "AlienEvent", "BossInfo", "CurrentBoss", "BossData", "AlienBossSpawn"}) do
                 local rInst = ReplicatedStorage:FindFirstChild(fn)
                 if rInst then timerRoots[#timerRoots + 1] = rInst end
                 local wInst = workspace:FindFirstChild(fn)
@@ -4948,7 +5077,7 @@ do
                 for _, gui in ipairs(pGui:GetChildren()) do
                     if gui:IsA("ScreenGui") and gui.Enabled and gui ~= Runtime.UI.GUI and gui ~= Runtime.UI.ToggleGui and gui.Name ~= "Chat" and gui.Name ~= "TouchGui" then
                         local gn = gui.Name:lower()
-                        if gn:find("boss") or gn:find("event") or gn:find("alien") or gn:find("arena") or gn:find("main") or gn:find("hud") or gn:find("top") then
+                        if gn:find("boss") or gn:find("event") or gn:find("alien") or gn:find("arena") then
                             for _, d in ipairs(gui:GetDescendants()) do
                                 if d:IsA("TextLabel") and d.Visible and d.Text and d.Text ~= "" then
                                     local df, nf = extractDespawnAndNextFromText(d.Text)
@@ -4977,8 +5106,9 @@ do
     }
     local DANGER_ATTR_KW = {"attackcooldown", "ultcooldown", "charging", "casting", "telegraph", "aoe", "ultimate", "meteor"}
     local IDLE_ATTR_STR = {none = true, idle = true, ready = true, ["false"] = true, ["0"] = true, normal = true, walk = true, chase = true}
-    local DANGER_ANIM_KW = {"aoe", "ult", "ultimate", "slam", "smash", "stomp", "charge", "windup", "cast", "roar", "special", "skill", "laser", "beam", "meteor", "shockwave", "nova"}
+    local DANGER_ANIM_KW = {"aoe", "ult", "ultimate", "slam", "smash", "stomp", "charge", "windup", "meteor", "shockwave", "nova", "super"}
     local DANGER_GUI_KW  = {"warning", "ultimate", "charging", "casting", "slam", "meteor", "laser", "shockwave", "aoe"}
+    local dangerAnimSeen = setmetatable({}, {__mode = "k"})
 
     local function isActiveDangerAttr(ak, av)
         if av == false or av == nil or av == 0 then return false end
@@ -4999,18 +5129,29 @@ do
 
     function BossEngine.notifyWatchDescendant(d)
         if not d then return end
-        local m = d:FindFirstAncestorOfClass("Model")
-        if m and BossEngine.watchCache[m] then
-            BossEngine.watchCache[m].t = -100
+        local curBoss = BossEngine.currentBossModel
+        if curBoss and d:IsDescendantOf(curBoss) then
+            if BossEngine.watchCache[curBoss] then
+                BossEngine.watchCache[curBoss].t = -100
+            end
         end
-        if d:IsA("TextLabel") or d:IsA("SurfaceGui") or d:IsA("BillboardGui") then
-            lastGuiTimerScan = -100
-            if BossEngine.markPassiveDirty then BossEngine.markPassiveDirty() end
-        elseif d:IsA("ValueBase") then
+        if d:IsA("ValueBase") then
             local nl = d.Name:lower()
             if nl:find("despawn") or nl:find("spawn") or nl:find("timer") or nl:find("timeleft") or nl:find("cooldown") then
                 lastGuiTimerScan = -100
                 if BossEngine.markPassiveDirty then BossEngine.markPassiveDirty() end
+            end
+        elseif d:IsA("TextLabel") or d:IsA("SurfaceGui") or d:IsA("BillboardGui") then
+            local cur = d.Parent
+            for _ = 1, 3 do
+                if not cur or cur == workspace or cur == game then break end
+                local cl = cur.Name:lower()
+                if cl:find("boss") or cl:find("arena") or cl:find("event") or cl:find("timer") then
+                    lastGuiTimerScan = -100
+                    if BossEngine.markPassiveDirty then BossEngine.markPassiveDirty() end
+                    break
+                end
+                cur = cur.Parent
             end
         end
     end
@@ -5063,11 +5204,12 @@ do
             local nl = d.Name:lower()
             local spT = BossEngine.spawnedPartTimes[d]
             local recent = (spT ~= nil) and ((M.clock() - spT) <= 4.5)
+            if not recent then return false, 0, false end
             if bossModel and d:IsDescendantOf(bossModel) then
-                if recent and (nl:find("ult") or nl:find("meteor") or nl:find("explosion") or nl:find("blast")) then
+                if nl:find("ult") or nl:find("meteor") or nl:find("explosion") or nl:find("shockwave") then
                     return true, 100, true
                 end
-            elseif recent and (nl:find("ult") or nl:find("meteor") or nl:find("explosion") or nl:find("blast") or nl:find("aoe") or nl:find("shockwave") or nl:find("laser")) then
+            elseif nl:find("ult") or nl:find("meteor") or nl:find("explosion") or nl:find("blast") or nl:find("aoe") or nl:find("shockwave") then
                 return true, 100, true
             end
             return false, 0, false
@@ -5094,8 +5236,18 @@ do
 
         local sz = M.max(d.Size.X, d.Size.Z) * 0.5
         if hasKw(dLow, AOE_KW) then
-            if bossModel and d:IsDescendantOf(bossModel) and (sz < 4.0 or d.Transparency >= 0.95) then
+            local spT = BossEngine.spawnedPartTimes[d]
+            local explicitZoneName = dLow:find("aoe", 1, true) or dLow:find("telegraph", 1, true) or dLow:find("redzone", 1, true) or dLow:find("dangerzone", 1, true)
+            if not spT and not explicitZoneName then
                 return false, 0, false
+            end
+            if bossModel and d:IsDescendantOf(bossModel) then
+                if (not spT) or sz < 4.0 or d.Transparency >= 0.95
+                    or dLow:find("armor", 1, true) or dLow:find("pack", 1, true) or dLow:find("wing", 1, true)
+                    or dLow:find("helmet", 1, true) or dLow:find("jet", 1, true) or dLow:find("body", 1, true)
+                    or dLow:find("handle", 1, true) or dLow:find("weapon", 1, true) then
+                    return false, 0, false
+                end
             end
             return true, sz + 45, true
         end
@@ -5152,6 +5304,7 @@ do
     end
 
     local cachedAoeState, cachedAoeRad = false, 120
+    local lastRootAoeScan = -100
     local function detectBossAOEOrUlt(bossObj, now)
         if not bossObj or not bossObj.part or not bossObj.part.Parent then return false, 120 end
 
@@ -5159,7 +5312,7 @@ do
         local dangerRadius, telegraphNow, immediateNow = 0, false, false
         local inFirstHalfCharge = false
 
-        if (now - BossEngine.lastAoeCheck) >= 0.12 or now < BossEngine.aoeFlagUntil then
+        if (now - BossEngine.lastAoeCheck) >= 0.04 or now < BossEngine.aoeFlagUntil then
             BossEngine.lastAoeCheck = now
 
             pcall(function()
@@ -5180,8 +5333,8 @@ do
                 local kindLow = (type(atkKind) == "string") and atkKind:lower() or ""
                 local isHeavyAtk = (kindLow:find("stomp") or kindLow:find("slam") or kindLow:find("shock")
                     or kindLow:find("aoe") or kindLow:find("ult") or kindLow:find("jump") or kindLow:find("meteor")
-                    or kindLow:find("laser") or kindLow:find("blast")) ~= nil
-                local isBasicPunch = (kindLow == "" or kindLow == "none" or kindLow == "idle" or kindLow:find("punch") ~= nil or kindLow:find("basic") ~= nil or kindLow:find("melee") ~= nil)
+                    or kindLow:find("laser") or kindLow:find("blast") or kindLow:find("skill")) ~= nil
+                local isIdleAtk = (kindLow == "" or kindLow == "none" or kindLow == "idle" or kindLow == "walk")
                 local baseAtkRad = isHeavyAtk and 145 or 115
                 if typeof(atkCF) == "CFrame" then
                     baseAtkRad = M.max(baseAtkRad, M.min(200, (atkCF.Position - bPos).Magnitude + 95))
@@ -5197,33 +5350,28 @@ do
                             BossEngine.seqTotal = M.clamp(rem, 0.25, 8.0)
                         end
                     end
-                    if rem >= -0.35 and rem <= 8.0 then
+                    if not isIdleAtk and rem >= -0.25 and rem <= 8.0 then
                         local seqStart = BossEngine.seqStart or srvNow
                         local seqTotal = BossEngine.seqTotal or M.clamp(rem, 0.25, 8.0)
                         local elapsed = srvNow - seqStart
-                        if elapsed < seqTotal * 0.48 and rem > 0.35 then
+                        if elapsed < seqTotal * 0.45 and rem > 0.35 then
                             inFirstHalfCharge = true
                         else
                             telegraphNow = true
                             dangerRadius = M.max(dangerRadius, baseAtkRad)
-                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + M.clamp(rem + 0.35, 0.20, 2.2))
+                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + M.clamp(rem + 0.30, 0.20, 2.0))
                         end
                     end
-                else
-                    if atkSeq ~= nil then
-                        if BossEngine.lastAttackSeq ~= nil and atkSeq ~= BossEngine.lastAttackSeq then
-                            BossEngine.lastAttackSeq = atkSeq
-                            if isHeavyAtk and not isBasicPunch then
-                                telegraphNow = true
-                                dangerRadius = M.max(dangerRadius, baseAtkRad)
-                                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.85)
-                            end
-                        elseif BossEngine.lastAttackSeq == nil then
-                            BossEngine.lastAttackSeq = atkSeq
+                elseif atkSeq ~= nil then
+                    if BossEngine.lastAttackSeq ~= nil and atkSeq ~= BossEngine.lastAttackSeq then
+                        BossEngine.lastAttackSeq = atkSeq
+                        if isHeavyAtk then
+                            telegraphNow = true
+                            dangerRadius = M.max(dangerRadius, baseAtkRad)
+                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.75)
                         end
-                    elseif isHeavyAtk and not isBasicPunch then
-                        telegraphNow = true
-                        dangerRadius = M.max(dangerRadius, baseAtkRad)
+                    elseif BossEngine.lastAttackSeq == nil then
+                        BossEngine.lastAttackSeq = atkSeq
                     end
                 end
 
@@ -5265,44 +5413,52 @@ do
                 if animator and not inFirstHalfCharge then
                     for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
                         local an = (tr.Animation and tr.Animation.Name or tr.Name):lower()
-                        if hasKw(an, DANGER_ANIM_KW) then
-                            telegraphNow = true
-                            if atkImpact == nil then immediateNow = true end
-                            dangerRadius = M.max(dangerRadius, 110)
+                        if not (an:find("idle", 1, true) or an:find("walk", 1, true) or an:find("run", 1, true) or an:find("hover", 1, true)) and hasKw(an, DANGER_ANIM_KW) then
+                            local seenT = dangerAnimSeen[tr]
+                            if not seenT then seenT = now; dangerAnimSeen[tr] = now end
+                            local isDirectUlt = (an:find("ult", 1, true) or an:find("slam", 1, true) or an:find("aoe", 1, true)) ~= nil
+                            if isDirectUlt or (now - seenT >= 0.25) then
+                                telegraphNow = true
+                                if atkImpact == nil and isDirectUlt then immediateNow = true end
+                                dangerRadius = M.max(dangerRadius, 110)
+                            end
                         end
                     end
                 end
             end)
 
-            local checkRoots = {bossObj.model, workspace}
-            local seenR = {[bossObj.model] = true, [workspace] = true}
-            if bossObj.model.Parent and bossObj.model.Parent ~= workspace and not seenR[bossObj.model.Parent] then
-                local pl = bossObj.model.Parent.Name:lower()
-                if pl ~= "map" and pl ~= "world" then
-                    seenR[bossObj.model.Parent] = true
-                    checkRoots[#checkRoots + 1] = bossObj.model.Parent
+            if (now - lastRootAoeScan) >= 0.16 then
+                lastRootAoeScan = now
+                local checkRoots = {bossObj.model, workspace}
+                local seenR = {[bossObj.model] = true, [workspace] = true}
+                if bossObj.model.Parent and bossObj.model.Parent ~= workspace and not seenR[bossObj.model.Parent] then
+                    local pl = bossObj.model.Parent.Name:lower()
+                    if pl ~= "map" and pl ~= "world" then
+                        seenR[bossObj.model.Parent] = true
+                        checkRoots[#checkRoots + 1] = bossObj.model.Parent
+                    end
                 end
-            end
-            local wsEv = workspace:FindFirstChild("Events")
-            if wsEv and not seenR[wsEv] then
-                seenR[wsEv] = true
-                checkRoots[#checkRoots + 1] = wsEv
-                for _, sub in ipairs(wsEv:GetChildren()) do
-                    if not seenR[sub] then seenR[sub] = true; checkRoots[#checkRoots + 1] = sub end
+                local wsEv = workspace:FindFirstChild("Events")
+                if wsEv and not seenR[wsEv] then
+                    seenR[wsEv] = true
+                    checkRoots[#checkRoots + 1] = wsEv
+                    for _, sub in ipairs(wsEv:GetChildren()) do
+                        if not seenR[sub] then seenR[sub] = true; checkRoots[#checkRoots + 1] = sub end
+                    end
                 end
-            end
-            for _, folderName in ipairs({"Effects", "VFX", "Debris", "BossAttacks", "Attacks", "Skills", "BossSkills", "Warnings", "Telegraphs", "AOE", "Ultimates", "BossArena", "EventArena", "AlienEvent"}) do
-                local f = workspace:FindFirstChild(folderName)
-                if f and not seenR[f] then seenR[f] = true; checkRoots[#checkRoots + 1] = f end
-            end
+                for _, folderName in ipairs({"Effects", "VFX", "Debris", "BossAttacks", "Attacks", "Skills", "BossSkills", "Warnings", "Telegraphs", "AOE", "Ultimates", "BossArena", "EventArena", "AlienEvent"}) do
+                    local f = workspace:FindFirstChild(folderName)
+                    if f and not seenR[f] then seenR[f] = true; checkRoots[#checkRoots + 1] = f end
+                end
 
-            for _, r in ipairs(checkRoots) do
-                for _, d in ipairs(r:GetChildren()) do
-                    if d ~= Player.Character and d ~= Lighting and not d:IsA("Terrain") and not d:IsA("Camera") then
-                        if BossEngine.trackedDangerInsts[d] == nil then
-                            local okD, rad, isImm = BossEngine.isDangerPart(d, bossObj.model, bPos)
-                            if okD then
-                                BossEngine.trackedDangerInsts[d] = {seen = now, immediate = isImm == true, rad = rad}
+                for _, r in ipairs(checkRoots) do
+                    for _, d in ipairs(r:GetChildren()) do
+                        if d ~= Player.Character and d ~= Lighting and not d:IsA("Terrain") and not d:IsA("Camera") then
+                            if BossEngine.trackedDangerInsts[d] == nil then
+                                local okD, rad, isImm = BossEngine.isDangerPart(d, bossObj.model, bPos)
+                                if okD then
+                                    BossEngine.trackedDangerInsts[d] = {seen = now, immediate = isImm == true, rad = rad}
+                                end
                             end
                         end
                     end
@@ -5339,16 +5495,16 @@ do
             if telegraphNow then
                 BossEngine.wasTelegraphActive = true
                 if immediateNow then BossEngine.wasImmediateHazard = true end
-                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + (immediateNow and 0.85 or 0.25))
+                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + (immediateNow and 0.65 or 0.25))
             elseif BossEngine.wasTelegraphActive then
                 BossEngine.wasTelegraphActive = false
-                local holdDur = BossEngine.wasImmediateHazard and 1.80 or 0.35
+                local holdDur = BossEngine.wasImmediateHazard and 0.45 or 0.25
                 BossEngine.wasImmediateHazard = false
                 BossEngine.postAttackHoldUntil = M.max(BossEngine.postAttackHoldUntil, now + holdDur)
             end
 
             cachedAoeState = telegraphNow or (now < BossEngine.aoeFlagUntil) or (now < BossEngine.postAttackHoldUntil) or (now < BossEngine.evadeUntil)
-            cachedAoeRad = M.clamp(dangerRadius, 110, 240)
+            cachedAoeRad = M.clamp(dangerRadius, 110, 280)
         else
             cachedAoeState = (now < BossEngine.aoeFlagUntil) or (now < BossEngine.postAttackHoldUntil) or (now < BossEngine.evadeUntil)
         end
@@ -5372,10 +5528,9 @@ do
         local maxStrikes = 1
         if target.hasDamageHitbox then
             local spd = M.clamp(tonumber(Config.PunchSpeed) or 140, 60, 500)
-            punchRate = (pingHeadroom > 95) and 8.0 or M.clamp(10 + spd * 0.03, 12, 22)
-            maxStrikes = 2
+            punchRate = (pingHeadroom > 95) and 6.0 or M.clamp(8 + spd * 0.015, 9, 13)
         else
-            punchRate = (pingHeadroom > 95) and 4.0 or ((pingHeadroom > 55) and 5.0 or 5.8)
+            punchRate = (pingHeadroom > 95) and 4.0 or ((pingHeadroom > 55) and 5.0 or 6.0)
         end
         bossPunchAcc += punchRate * M.min(dt, 0.05)
         local strikes = M.min(M.floor(bossPunchAcc), maxStrikes)
@@ -5385,7 +5540,7 @@ do
                 local _, curHP = readBossHealth(target.model, target.bodyStats)
                 if curHP <= 0 then break end
                 bossHandRight = not bossHandRight
-                Combat.executeStrike(bossHandRight, target.hasDamageHitbox and 3 or 1, s > 1, target)
+                Combat.executeStrike(bossHandRight, target.hasDamageHitbox and 2 or 1, s > 1, target)
                 if Telemetry then
                     Telemetry.punchesTotal += 1
                     Telemetry.recordEvent(Telemetry.punchTracker, 1)
@@ -5424,6 +5579,7 @@ do
     local function findNearbyBossChest(refPos)
         if not refPos then return nil, nil end
         local containers = {workspace}
+        local seenCont = {}
         local wsEv = workspace:FindFirstChild("Events")
         if wsEv then
             containers[#containers + 1] = wsEv
@@ -5434,24 +5590,36 @@ do
             if c then containers[#containers + 1] = c end
         end
         local bestChest, bestPart, bestDist = nil, nil, 150
-        for _, cont in ipairs(containers) do
-            for _, ch in ipairs(cont:GetChildren()) do
-                if (ch:IsA("Model") or ch:IsA("BasePart")) and ch ~= Player.Character then
-                    local nl = ch.Name:lower()
-                    if (nl:find("chest") or nl:find("loot") or nl:find("drop"))
-                        and not (nl:find("shop") or nl:find("store") or nl:find("vip") or nl:find("group") or nl:find("daily"))
-                        and not isViewOnlyPromptOrChest(ch) then
-                        local part = ch:IsA("BasePart") and ch or (ch.PrimaryPart or ch:FindFirstChild("Main", true) or ch:FindFirstChildWhichIsA("BasePart", true))
-                        if part then
-                            local d = (part.Position - refPos).Magnitude
-                            if d <= bestDist then
-                                bestDist = d
-                                bestChest = ch
-                                bestPart = part
-                            end
-                        end
+        local function considerChest(ch)
+            if not (ch and ch.Parent and (ch:IsA("Model") or ch:IsA("BasePart")) and ch ~= Player.Character) then return end
+            if seenCont[ch] then return end
+            seenCont[ch] = true
+            local nl = ch.Name:lower()
+            if (nl:find("chest") or nl:find("loot") or nl:find("drop") or (CollectionService and (CollectionService:HasTag(ch, "BossEventChest") or CollectionService:HasTag(ch, "AlienBossChest"))))
+                and not (nl:find("shop") or nl:find("store") or nl:find("vip") or nl:find("group") or nl:find("daily"))
+                and not isViewOnlyPromptOrChest(ch) then
+                local part = ch:IsA("BasePart") and ch or (ch.PrimaryPart or ch:FindFirstChild("Main", true) or ch:FindFirstChildWhichIsA("BasePart", true))
+                if part then
+                    local d = (part.Position - refPos).Magnitude
+                    if d <= bestDist then
+                        bestDist = d
+                        bestChest = ch
+                        bestPart = part
                     end
                 end
+            end
+        end
+        if CollectionService then
+            for _, cTag in ipairs({"BossEventChest", "AlienBossChest"}) do
+                local okC, tagged = pcall(CollectionService.GetTagged, CollectionService, cTag)
+                if okC and tagged then
+                    for _, tc in ipairs(tagged) do considerChest(tc) end
+                end
+            end
+        end
+        for _, cont in ipairs(containers) do
+            for _, ch in ipairs(cont:GetChildren()) do
+                considerChest(ch)
             end
         end
         return bestChest, bestPart
@@ -5540,9 +5708,18 @@ do
     end
 
     function BossEngine.stepFastPunch(dt)
-        if not (Config.Active and Config.AutoKillBoss and not BossEngine.evadingAOE and not BossEngine.collectingChest and BossEngine.tweenStartPos == nil) then return end
-        if BossEngine.currentTargetObj and BossEngine.currentBossModel and BossEngine.currentBossModel.Parent then
-            runFastBossBurst(dt, BossEngine.currentTargetObj)
+        if not (Config.Active and Config.AutoKillBoss and not BossEngine.evadingAOE and not BossEngine.collectingChest) then return end
+        local tgt = BossEngine.currentTargetObj
+        local m = BossEngine.currentBossModel
+        if tgt and m and m.Parent then
+            if BossEngine.tweenStartPos ~= nil then
+                local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+                local refPart = tgt.head or tgt.part
+                if not (root and refPart and refPart.Parent and (refPart.Position - root.Position).Magnitude <= 28) then
+                    return
+                end
+            end
+            runFastBossBurst(dt, tgt)
         end
     end
 
@@ -5741,14 +5918,26 @@ do
 
         if Config.BossAOEEvade and (aoeDetected or now < BossEngine.evadeUntil or now < BossEngine.postAttackHoldUntil) then
             if not BossEngine.evadingAOE or not BossEngine.dodgeEscapeDir then
-                local awayDir = (root.Position - target.part.Position) * Vector3.new(1, 0, 1)
-                BossEngine.dodgeEscapeDir = (awayDir.Magnitude > 0.5) and awayDir.Unit or Vector3.new(1, 0, 0)
+                local chosenDir = nil
+                if BossEngine.savedOriginCF then
+                    local origVec = (BossEngine.savedOriginCF.Position - target.part.Position) * Vector3.new(1, 0, 1)
+                    if origVec.Magnitude >= 15 then
+                        chosenDir = origVec.Unit
+                    end
+                end
+                if not chosenDir then
+                    local lookFlat = -(bHead.CFrame.LookVector * Vector3.new(1, 0, 1))
+                    chosenDir = (lookFlat.Magnitude > 0.1) and lookFlat.Unit or Vector3.new(0, 0, 1)
+                end
+                BossEngine.dodgeEscapeDir = chosenDir
             end
             BossEngine.evadingAOE = true
             BossEngine.tweenStartPos = nil
-            local safeDist = M.clamp(M.max(aoeRadius + 185, BossEngine.lastSafeDist or 290), 290, 420)
+            local safeDist = M.clamp(M.max(aoeRadius + 185, BossEngine.lastSafeDist or 290), 290, 380)
             BossEngine.lastSafeDist = safeDist
-            local safePos = target.part.Position + (BossEngine.dodgeEscapeDir * safeDist) + Vector3.new(0, 28, 0)
+            local horizDist = safeDist * 0.58
+            local vertDist = safeDist * 0.83
+            local safePos = target.part.Position + (BossEngine.dodgeEscapeDir * horizDist) + Vector3.new(0, vertDist, 0)
             local safeCF = CFrame.new(safePos, Vector3.new(bPos.X, safePos.Y, bPos.Z))
             BossEngine.lastSafeSpot = safePos
             BossEngine.lastHoverCF = safeCF
@@ -5776,11 +5965,11 @@ do
             headPos = target.part.Position + Vector3.new(0, topOff, 0)
         end
         local headTopY = (bHead.Size and bHead.Size.Y or 2) * 0.5
-        local vertClear = (bHead == target.part) and 1.0 or M.clamp(headTopY * 0.25, 0.3, 1.6)
-        local backOffset = (bHead.CFrame.LookVector * Vector3.new(1, 0, 1))
-        local flatBack = (backOffset.Magnitude > 0.05) and (-backOffset.Unit * 0.45) or Vector3.zero
-        local hoverPos = headPos + Vector3.new(flatBack.X, vertClear, flatBack.Z)
-        local hoverCF = CFrame.new(hoverPos, Vector3.new(headPos.X, hoverPos.Y, headPos.Z))
+        local vertClear = (bHead == target.part) and 0.65 or M.clamp(headTopY * 0.15, 0.15, 0.75)
+        local lookFlat = (bHead.CFrame.LookVector * Vector3.new(1, 0, 1))
+        local faceDir = (lookFlat.Magnitude > 0.05) and lookFlat.Unit or Vector3.new(0, 0, -1)
+        local hoverPos = headPos + Vector3.new(0, vertClear, 0)
+        local hoverCF = CFrame.new(hoverPos, hoverPos + faceDir)
 
         local distToHead = (hoverPos - root.Position).Magnitude
         local nextCF = hoverCF
@@ -7754,8 +7943,7 @@ do
         local function onPunchChanged()
             Runtime.SessionTokens.pun += 1
             if Config.AutoPunch or Config.FastPunch then
-                local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-                if root then Combat.refreshTargets(root.Position, true) end
+                Combat.lastTargetScan = -100
             else
                 Telemetry.punchTracker = Telemetry.newTracker()
                 for _, tr in ipairs(Combat.tracks) do pcall(function() if tr.IsPlaying then tr:Stop(0.05) end end) end
@@ -7846,10 +8034,17 @@ do
         createToggle(P, "Boss", "Auto Kill Boss (Head-Hover + Fast Punch)", "AutoKillBoss", nil, function(on)
             Runtime.SessionTokens.boss += 1
             BossEngine.evadingAOE = false
+            BossEngine.dodgeEscapeDir = nil
+            BossEngine.evadeUntil = 0
+            BossEngine.aoeFlagUntil = 0
+            BossEngine.postAttackHoldUntil = 0
+            BossEngine.wasTelegraphActive = false
+            BossEngine.wasImmediateHazard = false
+            BossEngine.lastAtkImpact = nil
             BossEngine.prevPlayerHP = nil
+            BossEngine.trackedDangerInsts = setmetatable({}, {__mode = "k"})
             if on then
-                local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
-                if root then Combat.refreshTargets(root.Position, true) end
+                Combat.lastTargetScan = -100
             else
                 BossEngine.lastSafeSpot = nil
                 BossEngine.currentBossModel = nil
@@ -8190,10 +8385,16 @@ local function startLoops()
     end)
     Core.track(workspace.DescendantAdded:Connect(function(d)
         if myGen ~= Runtime.Gen or not Config.Active then return end
-        if d:IsA("BasePart") or d:IsA("Highlight") or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Explosion") or d:IsA("Decal") or d:IsA("Texture") then
+        local myChar = Player.Character
+        if myChar and (d == myChar or d:IsDescendantOf(myChar)) then return end
+
+        local isVfxOrPart = d:IsA("BasePart") or d:IsA("Highlight") or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Explosion") or d:IsA("Decal") or d:IsA("Texture")
+        if isVfxOrPart and Config.AutoKillBoss then
             BossEngine.spawnedPartTimes[d] = M.clock()
         end
-        if BossEngine.notifyWatchDescendant then BossEngine.notifyWatchDescendant(d) end
+        if BossEngine.notifyWatchDescendant and (d:IsA("ValueBase") or (BossEngine.currentBossModel and d:IsDescendantOf(BossEngine.currentBossModel))) then
+            BossEngine.notifyWatchDescendant(d)
+        end
         if d:IsA("Humanoid") or d:IsA("AnimationController") or d:IsA("BillboardGui") or (d:IsA("BasePart") and d.Name == "BossDamageHitbox") then
             Combat.registerCandidateModel(d)
         elseif d:IsA("Model") then
@@ -8208,12 +8409,10 @@ local function startLoops()
                 Combat.registerCandidateModel(d)
             end
         end
-        if Config.AutoKillBoss and Config.BossAOEEvade and BossEngine.currentBossModel
-            and (d:IsA("BasePart") or d:IsA("Highlight") or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Explosion") or d:IsA("Decal") or d:IsA("Texture")) then
-            local bRoot = BossEngine.currentBossModel:FindFirstChild("HumanoidRootPart", true)
-                or BossEngine.currentBossModel:FindFirstChild("BossDamageHitbox", true)
-                or BossEngine.currentBossModel:FindFirstChildWhichIsA("BasePart", true)
-            if bRoot then
+        if Config.AutoKillBoss and Config.BossAOEEvade and BossEngine.currentBossModel and isVfxOrPart then
+            local tgtObj = BossEngine.currentTargetObj
+            local bRoot = tgtObj and (tgtObj.part or tgtObj.head) or BossEngine.currentBossModel.PrimaryPart
+            if bRoot and bRoot.Parent then
                 local okD, rad, isImm = BossEngine.isDangerPart(d, BossEngine.currentBossModel, bRoot.Position)
                 if okD then
                     local now = M.clock()
@@ -8223,26 +8422,6 @@ local function startLoops()
                         BossEngine.wasImmediateHazard = true
                         BossEngine.aoeFlagUntil = now + 0.85
                         BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.85)
-                        local char = Player.Character
-                        local pRoot = char and char:FindFirstChild("HumanoidRootPart")
-                        if pRoot then
-                            local bPos = bRoot.Position
-                            if not BossEngine.evadingAOE or not BossEngine.dodgeEscapeDir then
-                                local awayDir = (pRoot.Position - bPos) * Vector3.new(1, 0, 1)
-                                BossEngine.dodgeEscapeDir = (awayDir.Magnitude > 0.5) and awayDir.Unit or Vector3.new(1, 0, 0)
-                            end
-                            BossEngine.evadingAOE = true
-                            BossEngine.tweenStartPos = nil
-                            local safeDist = M.clamp(M.max((rad or 110) + 185, BossEngine.lastSafeDist or 290), 290, 420)
-                            BossEngine.lastSafeDist = safeDist
-                            local safePos = bPos + (BossEngine.dodgeEscapeDir * safeDist) + Vector3.new(0, 28, 0)
-                            local safeCF = CFrame.new(safePos, Vector3.new(bPos.X, safePos.Y, bPos.Z))
-                            BossEngine.lastSafeSpot = safePos
-                            BossEngine.lastHoverCF = safeCF
-                            pRoot.AssemblyLinearVelocity = Vector3.zero
-                            pRoot.AssemblyAngularVelocity = Vector3.zero
-                            pRoot.CFrame = safeCF
-                        end
                     end
                 end
             end
@@ -8885,16 +9064,16 @@ local function startLoops()
                     if root then Combat.refreshTargets(root.Position, false) end
                     local spd = M.clamp(tonumber(Config.PunchSpeed) or 60, 1, 500)
                     local pingHeadroom = Telemetry.livePing - Telemetry.baselinePing
-                    local maxRpc = (pingHeadroom > 80) and 14 or ((pingHeadroom > 40) and 24 or 40)
-                    punchAcc += M.clamp(10 + (spd / 500) * (maxRpc - 10), 10, maxRpc) * M.min(dt, 0.05)
+                    local maxRpc = (pingHeadroom > 80) and 8 or ((pingHeadroom > 40) and 12 or 18)
+                    punchAcc += M.clamp(6 + (spd / 500) * (maxRpc - 6), 6, maxRpc) * M.min(dt, 0.05)
 
-                    local strikes = M.min(M.floor(punchAcc), 3)
+                    local strikes = M.min(M.floor(punchAcc), 2)
                     if strikes > 0 then
                         punchAcc -= strikes
                         for s = 1, strikes do
                             if not Config.FastPunch or myToken ~= Runtime.SessionTokens.pun then break end
                             rightHandNext = not rightHandNext
-                            if Combat.executeStrike(rightHandNext, (s == 1) and 2 or 1, s > 1, nil) then
+                            if Combat.executeStrike(rightHandNext, (s == 1) and 1 or 0, s > 1, nil) then
                                 Telemetry.punchesTotal += 1; Telemetry.recordEvent(Telemetry.punchTracker, 1)
                             end
                         end
