@@ -1,6 +1,6 @@
 --[[
-    🌸🐾💖 Yui Hub    |    PRIVATE👾🤫 (EARLY ACCESS - Fixed Boss Auto-Kill & Half-Charge Far Evade, Freeze Character, Fixed Playtime Rewards & Zero-Lag Engine) 💖🐾🌸
-- Boss Tab (Auto Kill Boss + Mobile Boss Selector + Half-Charge AOE/Ultimate Far Evade):
+    🌸🐾💖 Yui Hub    |    PRIVATE👾🤫 (EARLY ACCESS - Fixed Boss Auto-Kill & Integrated Floor-Level Evade, Freeze Character, Fixed Playtime Rewards & Zero-Lag Engine) 💖🐾🌸
+- Boss Tab (Auto Kill Boss + Mobile Boss Selector + Integrated AOE/Ultimate Evade):
   * Easy mobile 2-column selector: Common, Rare, Epic, Legendary, Mythic, Rainbow/Admin, Alien Boss (Event) & All Bosses
   * Strict creature-verified Boss discovery (excludes Shops, NPCs, Arenas, Bases, Pets & generic props!)
   * Smoothly tweens to every boss's Head with noclip hitbox entry, upright velocity lock & fast boss punching
@@ -209,7 +209,6 @@ local DefaultConfig = {
     PunchSpeed = 60,
 
     AutoKillBoss = false,
-    BossAOEEvade = true,
     SelectedBoss = "Common Boss",
 
     AutoCollectRewards = false,
@@ -3401,7 +3400,6 @@ local BossEngine = {
     currentBossModel = nil,
     currentBossHum = nil,
     currentTargetObj = nil,
-    prevPlayerHP = nil,
     prevEngagedModel = nil,
     prevEngagedHP = nil,
     lastTrackedBossModel = nil,
@@ -5013,9 +5011,16 @@ do
         for _, opt in ipairs(BossEngine.OPTIONS) do
             if opt.label == sel then keys = opt.keys; break end
         end
-        if keys[1] == "*" then return Combat.bossTargets[1] end
+        if keys[1] == "*" then
+            for _, b in ipairs(Combat.bossTargets) do
+                if b and b.model and b.model.Parent and b.part and b.part.Parent and (tonumber(b.hp) or 0) > 0 then
+                    return b
+                end
+            end
+            return nil
+        end
         for _, b in ipairs(Combat.bossTargets) do
-            if b.hp > 0 then
+            if b and b.model and b.model.Parent and b.part and b.part.Parent and (tonumber(b.hp) or 0) > 0 then
                 for _, kw in ipairs(keys) do
                     if kw:sub(1, 1) == "%" then
                         if b.searchTag:find(kw) then return b end
@@ -5039,11 +5044,11 @@ do
     end
 
     local DANGER_ATTR_EXACT = {
-        attackcooldown = true, ultcooldown = true, charging = true, casting = true,
+        charging = true, casting = true,
         telegraph = true, aoe = true, ultimate = true, ult = true, meteor = true,
         slam = true, shockwave = true, laser = true, nova = true,
     }
-    local DANGER_ATTR_KW = {"attackcooldown", "ultcooldown", "charging", "casting", "telegraph", "aoe", "ultimate", "meteor"}
+    local DANGER_ATTR_KW = {"charging", "casting", "telegraph", "aoe", "ultimate", "meteor"}
     local CHARGE_NUM_KW = {"charge", "chargeprogress", "skillcharge", "ultcharge", "castprogress", "windup"}
     local IDLE_ATTR_STR = {none = true, idle = true, ready = true, ["false"] = true, ["0"] = true, normal = true, walk = true, chase = true}
     local DANGER_ANIM_KW = {"aoe", "ult", "ultimate", "slam", "smash", "stomp", "charge", "windup", "meteor", "shockwave", "nova", "super", "skill"}
@@ -5054,6 +5059,8 @@ do
         if av == false or av == nil or av == 0 then return false end
         local al = tostring(ak):lower()
         if al:sub(1, 10) == "bossattack" then return false end
+        -- Cooldowns count down between attacks; they do not mean an attack is active.
+        if al:find("cooldown", 1, true) then return false end
         local keyMatch = DANGER_ATTR_EXACT[al] or hasKw(al, DANGER_ATTR_KW)
         if av == true then return keyMatch end
         if type(av) == "string" then
@@ -5769,7 +5776,6 @@ do
             BossEngine.wasTelegraphActive = false
             BossEngine.wasImmediateHazard = false
             BossEngine.postAttackHoldUntil = 0
-            BossEngine.prevPlayerHP = nil
             BossEngine.lastHoverCF = nil
             BossEngine.tweenStartPos = nil
             BossEngine.currentBossModel = nil
@@ -5937,28 +5943,18 @@ do
         target.maxHp = curMax
         target.hpPending = curPending
 
-        if BossEngine.prevPlayerHP and hum.Health < BossEngine.prevPlayerHP - 0.1 then
-            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 2.4)
-            BossEngine.lastSafeDist = M.min(580, (BossEngine.lastSafeDist or 380) + 60)
-        end
-        BossEngine.prevPlayerHP = hum.Health
-
         local aoeDetected, aoeRadius = false, 140
-        if Config.BossAOEEvade then
-            aoeDetected, aoeRadius = detectBossAOEOrUlt(target, now)
-        end
+        aoeDetected, aoeRadius = detectBossAOEOrUlt(target, now)
 
         local bHead = target.head or target.part
         local bPos = bHead.Position
 
-        if Config.BossAOEEvade and (aoeDetected or now < BossEngine.evadeUntil or now < BossEngine.postAttackHoldUntil) then
+        if aoeDetected or now < BossEngine.evadeUntil or now < BossEngine.postAttackHoldUntil then
             if not BossEngine.evadingAOE or not BossEngine.dodgeEscapeDir then
                 local chosenDir = nil
-                if BossEngine.savedOriginCF then
-                    local origVec = (BossEngine.savedOriginCF.Position - target.part.Position) * Vector3.new(1, 0, 1)
-                    if origVec.Magnitude >= 15 then
-                        chosenDir = origVec.Unit
-                    end
+                local awayFromBoss = (root.Position - target.part.Position) * Vector3.new(1, 0, 1)
+                if awayFromBoss.Magnitude >= 8 then
+                    chosenDir = awayFromBoss.Unit
                 end
                 if not chosenDir then
                     local lookFlat = -(bHead.CFrame.LookVector * Vector3.new(1, 0, 1))
@@ -5968,18 +5964,19 @@ do
             end
             BossEngine.evadingAOE = true
             BossEngine.tweenStartPos = nil
-            local safeDist = M.clamp(M.max(aoeRadius + 240, BossEngine.lastSafeDist or 380), 380, 560)
+            local safeDist = M.clamp((tonumber(aoeRadius) or 140) + 36, 150, 360)
             BossEngine.lastSafeDist = safeDist
-            local horizDist = safeDist * 0.72
-            local vertDist = safeDist * 0.70
-            local safePos = target.part.Position + (BossEngine.dodgeEscapeDir * horizDist) + Vector3.new(0, vertDist, 0)
+            -- Evade on the current floor plane. Preserve the character's Y so
+            -- dodging never turns into an upward launch or a floating hover.
+            local escapePos = target.part.Position + (BossEngine.dodgeEscapeDir * safeDist)
+            local safePos = Vector3.new(escapePos.X, root.Position.Y, escapePos.Z)
             local safeCF = CFrame.new(safePos, Vector3.new(bPos.X, safePos.Y, bPos.Z))
             BossEngine.lastSafeSpot = safePos
             BossEngine.lastHoverCF = safeCF
             root.AssemblyLinearVelocity = Vector3.zero
             root.AssemblyAngularVelocity = Vector3.zero
             root.CFrame = safeCF
-            BossEngine.statusText = M.fmtStr("Action: ⚡ DODGING SKILL / ULT (%d studs safe)", M.floor(safeDist))
+            BossEngine.statusText = M.fmtStr("Action: Evading boss attack (%d studs)", M.floor(safeDist))
             return
         end
 
@@ -8142,7 +8139,7 @@ do
             refreshBossChoiceHighlights()
         end)
 
-        createToggle(P, "Boss", "Auto Kill Boss (Head-Tween + Fast Punch)", "AutoKillBoss", nil, function(on)
+        createToggle(P, "Boss", "Auto Kill Boss (Auto Evade + Fast Punch)", "AutoKillBoss", nil, function(on)
             Runtime.SessionTokens.boss += 1
             BossEngine.evadingAOE = false
             BossEngine.dodgeEscapeDir = nil
@@ -8152,7 +8149,6 @@ do
             BossEngine.wasTelegraphActive = false
             BossEngine.wasImmediateHazard = false
             BossEngine.lastAtkImpact = nil
-            BossEngine.prevPlayerHP = nil
             BossEngine.lastSafeDist = 380
             BossEngine.trackedDangerInsts = setmetatable({}, {__mode = "k"})
             if on then
@@ -8172,10 +8168,7 @@ do
                 end
                 Combat.restoreJoints()
             end
-        end, "tweens cleanly to boss head, enters hitbox & fast-punches automatically")
-
-        createToggle(P, "Boss", "Auto Evade Boss Ultimate / AOE", "BossAOEEvade", nil, nil,
-            "teleports far outside boss AOE/ult range at 50% charge (0 damage)")
+        end, "targets live bosses, evades detected attacks at floor level, then resumes punching")
     end
 
     function UIBuilders.Reward(P, ctx)
@@ -8525,7 +8518,7 @@ local function startLoops()
                 Combat.registerCandidateModel(d)
             end
         end
-        if Config.AutoKillBoss and Config.BossAOEEvade and BossEngine.currentBossModel and isVfxOrPart then
+        if Config.AutoKillBoss and BossEngine.currentBossModel and isVfxOrPart then
             local tgtObj = BossEngine.currentTargetObj
             local bRoot = tgtObj and (tgtObj.part or tgtObj.head) or BossEngine.currentBossModel.PrimaryPart
             if bRoot and bRoot.Parent then
@@ -8560,7 +8553,7 @@ local function startLoops()
         CharPhysics.bodyVel = nil; CharPhysics.bodyGyro = nil
         CharPhysics.trackedHum = nil; CharPhysics.trackedSizeChar = nil; CharPhysics.scaleBackup = {}
         CharPhysics.freezeCF = nil; CharPhysics.freezeChar = nil; CharPhysics.freezeAnchoredBackup = nil
-        BossEngine.prevPlayerHP = nil; BossEngine.lastHoverCF = nil; BossEngine.tweenStartPos = nil; BossEngine.noClipChar = nil
+        BossEngine.lastHoverCF = nil; BossEngine.tweenStartPos = nil; BossEngine.noClipChar = nil
         BossEngine.evadingAOE = false; BossEngine.dodgeEscapeDir = nil; BossEngine.evadeUntil = 0; BossEngine.aoeFlagUntil = 0
         BossEngine.wasTelegraphActive = false; BossEngine.wasImmediateHazard = false; BossEngine.postAttackHoldUntil = 0; BossEngine.lastSafeDist = 380
         BossEngine.currentTargetObj = nil; BossEngine.prevEngagedModel = nil; BossEngine.prevEngagedHP = nil
