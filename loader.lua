@@ -7733,55 +7733,53 @@ do
         end
         BossEngine.lastSafeDist = 36
 
-        -- BEHIND & ON TOP OF THE BOSS'S HEAD (never in the middle/front aggro zone, so the boss triggers skills/ultimates far less!):
+        -- RIGHT BEHIND THE BOSS'S BACK HEAD (at back-of-head level, safely behind frontal red skills & well inside expanded hitbox):
         local realHead = target.model:FindFirstChild("Head", true)
         local headPart = (realHead and realHead:IsA("BasePart") and realHead.Parent and (realHead.Position - target.part.Position).Magnitude <= 45)
             and realHead or bHead
-        local lookFlat = (target.part.CFrame.LookVector * Vector3.new(1, 0, 1))
+        local headLook = (headPart and headPart.CFrame and (headPart.CFrame.LookVector * Vector3.new(1, 0, 1))) or Vector3.zero
+        local rootLook = (target.part.CFrame.LookVector * Vector3.new(1, 0, 1))
+        local lookFlat = (rootLook.Magnitude > 0.05) and rootLook or headLook
         local faceDir = (lookFlat.Magnitude > 0.05) and lookFlat.Unit or Vector3.new(0, 0, -1)
 
-        local headPos, headTopSurfaceY, headDepth
+        local headPos, headHalfH, headDepth
         if headPart and headPart ~= target.part and headPart.Name:lower():find("head", 1, true) then
             headPos = headPart.Position
             headDepth = M.max(headPart.Size.X, headPart.Size.Z) * 0.5
-            local partTop = headPart.Position.Y + ((headPart.Size and headPart.Size.Y or 2) * 0.5)
-            headTopSurfaceY = partTop
-            if target.bodyStats and target.bodyStats.valid and target.bodyStats.maxY > partTop then
-                -- Stay cleanly above helmets/horns without floating away into tall halos/wings
-                headTopSurfaceY = M.min(target.bodyStats.maxY, partTop + 2.5)
-            end
+            headHalfH = (headPart.Size and headPart.Size.Y or 2) * 0.5
         else
             local topOff = BossEngine.cachedTopOffset[target.model]
             if not topOff then
                 topOff = (target.bodyStats and target.bodyStats.valid)
-                    and M.max(4.0, target.bodyStats.maxY - target.part.Position.Y)
-                    or 10.0
+                    and M.max(4.0, (target.bodyStats.maxY - target.part.Position.Y) * 0.82)
+                    or 8.0
                 BossEngine.cachedTopOffset[target.model] = topOff
             end
             headPos = target.part.Position + Vector3.new(0, topOff, 0)
-            headTopSurfaceY = headPos.Y
+            headHalfH = 2.0
             headDepth = 2.5
         end
-        -- Position FAR BEHIND & ABOVE the boss's head so the 2 red frontal skills never hit on Beach OR Alien Boss!
+
+        -- Position directly behind the back of the boss's head (clear of the 2 frontal red skills, never floating far away in the sky)
         local bodySpan = (target.bodyStats and target.bodyStats.maxSpan) or 18
         local isBeachTgt = (target.isEvent ~= true)
         local behindHeadOff = isBeachTgt
-            and M.clamp(headDepth + bodySpan * 0.70 + 12, 20, 36)
-            or  M.clamp(headDepth + bodySpan * 0.65 + 10, 18, 32)
+            and M.clamp(headDepth + bodySpan * 0.28 + 5.0, 10.5, 18.0)
+            or  M.clamp(headDepth + bodySpan * 0.24 + 4.5, 9.0, 16.0)
         local backHeadPos = Vector3.new(headPos.X - faceDir.X * behindHeadOff, headPos.Y, headPos.Z - faceDir.Z * behindHeadOff)
 
-        local headYPad = isBeachTgt and 2.2 or 1.5
-        local rawHoverY = M.max(headTopSurfaceY + hipOff + headYPad, minLegalY)
+        -- Hold right at back-of-head height (slightly above head center, never 10+ studs above the crown)
+        local rawHoverY = M.max(headPos.Y + headHalfH * 0.35 + 1.0, minLegalY)
         if not BossEngine.smoothHoverY or M.abs(rawHoverY - BossEngine.smoothHoverY) > 18 then
             BossEngine.smoothHoverY = rawHoverY
         else
-            BossEngine.smoothHoverY += (rawHoverY - BossEngine.smoothHoverY) * M.clamp((tonumber(dt) or 0.016) * 8, 0.08, 0.25)
+            BossEngine.smoothHoverY += (rawHoverY - BossEngine.smoothHoverY) * M.clamp((tonumber(dt) or 0.016) * 10, 0.10, 0.30)
         end
         local hoverPos = Vector3.new(backHeadPos.X, BossEngine.smoothHoverY, backHeadPos.Z)
         local hoverCF = CFrame.new(hoverPos, Vector3.new(headPos.X, hoverPos.Y, headPos.Z))
 
-        -- INSTANT TELEPORT when turning on Auto Boss / engaging a new boss so skill/ultimate does NOT trigger on approach!
-        -- Smooth high-arc tween ONLY turns on AFTER the player has landed behind the boss's head.
+        -- INSTANT TELEPORT on initial turn-on / new boss engage so skills do NOT trigger on approach;
+        -- AFTER landing behind the boss's back head, smoothly TWEEN directly behind its back head (both on post-dodge return & live boss movement/rotation)!
         local distToHead = (hoverPos - root.Position).Magnitude
         local nextCF = hoverCF
         if not BossEngine.hasLandedOnHead then
@@ -7798,7 +7796,7 @@ do
                         end
                     end)
                 end)
-            elseif distToHead <= 18 then
+            else
                 BossEngine.hasLandedOnHead = true
             end
             nextCF = hoverCF
@@ -7816,13 +7814,13 @@ do
                 end)
             end)
             nextCF = hoverCF
-        elseif distToHead > 20 then
-            if not BossEngine.tweenStartPos or BossEngine.tweenTargetModel ~= target.model or (now - BossEngine.tweenStartT) > (BossEngine.tweenDur + 0.16) then
+        elseif distToHead > 8 then
+            if not BossEngine.tweenStartPos or BossEngine.tweenTargetModel ~= target.model or (now - BossEngine.tweenStartT) > (BossEngine.tweenDur + 0.14) then
                 BossEngine.tweenStartPos = root.Position
                 BossEngine.tweenStartT = now
                 BossEngine.tweenElapsed = 0
                 BossEngine.tweenTargetModel = target.model
-                BossEngine.tweenDur = M.clamp(distToHead / 420, 0.14, 0.55)
+                BossEngine.tweenDur = M.clamp(distToHead / 280, 0.16, 0.48)
             end
             BossEngine.tweenElapsed = (BossEngine.tweenElapsed or 0) + M.max(dt or 0.016, 0)
             local rawA = M.max(now - BossEngine.tweenStartT, BossEngine.tweenElapsed) / M.max(BossEngine.tweenDur, 0.001)
@@ -7831,14 +7829,15 @@ do
                 nextCF = hoverCF
             else
                 local a = M.clamp(rawA, 0, 1)
-                local xzAlpha = 1 - (1 - a) * (1 - a)
-                local yAlpha = 1 - (1 - a) * (1 - a) * (1 - a)
-                local arcBoost = M.sin(M.pi * a) * M.clamp(distToHead * 0.22, 6, 24)
-                local sx = BossEngine.tweenStartPos.X + (hoverPos.X - BossEngine.tweenStartPos.X) * xzAlpha
-                local sz = BossEngine.tweenStartPos.Z + (hoverPos.Z - BossEngine.tweenStartPos.Z) * xzAlpha
-                local sy = BossEngine.tweenStartPos.Y + (hoverPos.Y - BossEngine.tweenStartPos.Y) * yAlpha + arcBoost
+                -- Smooth cubic ease-out directly to behind the back of the boss's head (gentle low lift, no sky-launch!)
+                local inv = 1 - a
+                local ease = 1 - inv * inv * inv
+                local gentleLift = M.sin(M.pi * a) * M.clamp(distToHead * 0.035, 1.0, 4.0)
+                local sx = BossEngine.tweenStartPos.X + (hoverPos.X - BossEngine.tweenStartPos.X) * ease
+                local sz = BossEngine.tweenStartPos.Z + (hoverPos.Z - BossEngine.tweenStartPos.Z) * ease
+                local sy = BossEngine.tweenStartPos.Y + (hoverPos.Y - BossEngine.tweenStartPos.Y) * ease + gentleLift
                 local stepPos = Vector3.new(sx, M.max(sy, minLegalY), sz)
-                if (hoverPos - stepPos).Magnitude <= 6 then
+                if (hoverPos - stepPos).Magnitude <= 3.5 then
                     BossEngine.tweenStartPos = nil
                     nextCF = hoverCF
                 else
@@ -7847,6 +7846,15 @@ do
             end
         else
             BossEngine.tweenStartPos = nil
+            -- Smooth micro-tween behind the boss's back head while it walks or turns
+            local followAlpha = M.clamp((tonumber(dt) or 0.016) * 16, 0.18, 0.65)
+            local curPos = root.Position
+            local smPos = Vector3.new(
+                curPos.X + (hoverPos.X - curPos.X) * followAlpha,
+                M.max(curPos.Y + (hoverPos.Y - curPos.Y) * followAlpha, minLegalY),
+                curPos.Z + (hoverPos.Z - curPos.Z) * followAlpha
+            )
+            nextCF = CFrame.new(smPos, Vector3.new(headPos.X, smPos.Y, headPos.Z))
         end
 
         if nextCF.Position.Y < minLegalY then
@@ -10325,7 +10333,8 @@ do
             local hasFps = (setfpscap ~= nil or set_fps_cap ~= nil or setfps ~= nil or setfflag ~= nil)
             local hasConn = (getconnections ~= nil or firesignal ~= nil)
             local hasFiles = (writefile ~= nil and isfile ~= nil)
-            local has3dToggle = (RunService.Set3dRenderingEnabled ~= nil)
+            local ok3d, has3dVal = pcall(function() return RunService.Set3dRenderingEnabled ~= nil end)
+            local has3dToggle = (ok3d and has3dVal == true)
             local hasPunchTool = (Remotes.findPunchTool() ~= nil)
             local rewTotal = #Remotes.questRemotes + #Remotes.dailyRemotes + #Remotes.chestRemotes + #Remotes.genericRewardRemotes + #Remotes.timeRewardRemotes
             local charRig = (Player.Character and Player.Character:FindFirstChildOfClass("Humanoid") and Player.Character:FindFirstChildOfClass("Humanoid").RigType.Name) or "R15"
