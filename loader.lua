@@ -1,16 +1,15 @@
 --[[
-    🌸🐾💖 Yui Hub    |    WELCOME <Roblox display name> (EARLY ACCESS - Fixed Boss Auto-Kill & Integrated Floor-Level Evade, Freeze Character, Fixed Playtime Rewards & Zero-Lag Engine) 💖🐾🌸
-- Boss Tab (Auto Kill Boss + Mobile Boss Selector + Integrated AOE/Ultimate Evade):
+    🌸🐾💖 Yui Hub    |    WELCOME <Roblox display name> (EARLY ACCESS - Late Yellow-Ult Evade, Turbo Anti-Twist Punch, OLED Black 3D Saver, 4-Layer Popup Shield & AI Scanner v4) 💖🐾🌸
+- Boss Tab (Auto Kill Boss + Mobile Boss Selector + Late Yellow-Ultimate Evade):
   * Easy mobile 2-column selector: Common, Rare, Epic, Legendary, Mythic, Rainbow/Admin, Alien Boss (Event) & All Bosses
-  * Strict creature-verified Boss discovery (excludes Shops, NPCs, Arenas, Bases, Pets & generic props!)
-  * Smoothly tweens to every boss's Head with noclip hitbox entry, upright velocity lock & fast boss punching
-  * Half-charge (50%) skill/ultimate detection + multi-color telegraph evade far outside AOE/ult range (no spawn/despawn timer clutter)
-- Clean Punch Tab:
-  * Keeps Auto Punch with low-ping adaptive rate control & adds Freeze Character (toggleable ON/OFF)
+  * Instant teleport far behind boss's head on engage (tween only after landing) + expanded hitbox for effortless hits
+  * Ignores the first 2 red frontal skills on all bosses; dodges ONLY yellow ultimate AOE <1s before impact (~72% charge)
+- Turbo Punch Tab:
+  * Faster Auto Punch & Boss Burst with anti-twist Animator/C0 guard + smooth boxing animations & Freeze Character
 - Zero-Lag / Zero-Freeze Engine & Upgraded Perf Stats Tab:
-  * Zero per-frame closure allocations, time-budgeted chunked FPSBoost apply/restore, ultra-thin RenderStepped & Frame-Protect guard
-  * Full Perf Stats live dashboard: FPS + 1% Low + Peak, Ping + Jitter, Net I/O KB/s, Total & Lua Heap Memory, Purge GC & 3D Render Saver
-- Neural AI Scanner v3 (Turbo Parallel Zero-Freeze) + Threat Detection + Settings Anti-AFK Guard
+  * 4-Layer Strength/Durability/Agility Popup Shield, OLED Pitch-Black 3D Render Battery Saver & Chunked FPSBoost
+  * Full Perf Stats live dashboard: FPS + 1% Low + Peak, Ping + Jitter, Net I/O KB/s, Total & Lua Heap Memory & Purge GC
+- Neural AI Scanner v4 (Turbo Parallel Zero-Freeze) + Live Subsystem & Staff Threat Audit + Anti-AFK Guard
 ]]
 
 ----------------------------------------------------------------
@@ -5288,17 +5287,51 @@ do
         end
     end
 
+    local jointsModified = false
+    local lastPlayingTrack = nil
+
     function Combat.restoreJoints()
         for key, m in pairs(Combat.joints) do
             local orig = Combat.origC0[key]
             if m and m.Parent and orig then pcall(function() m.C0 = orig end) end
         end
+        jointsModified = false
         Combat.swingProgress = 1
+    end
+
+    local function isNativeActionAnimPlaying(hum, desiredSpeed)
+        local animator = hum and hum:FindFirstChildOfClass("Animator")
+        if not animator then return false end
+        local okT, playing = pcall(animator.GetPlayingAnimationTracks, animator)
+        if not (okT and playing) then return false end
+        local foundAction = false
+        for i = 1, #playing do
+            local tr = playing[i]
+            if tr and tr.IsPlaying then
+                local pri = tr.Priority
+                local isAction = (pri == Enum.AnimationPriority.Action
+                    or pri == Enum.AnimationPriority.Action2
+                    or pri == Enum.AnimationPriority.Action3
+                    or pri == Enum.AnimationPriority.Action4)
+                if isAction then
+                    local an = ((tr.Animation and tr.Animation.Name) or tr.Name or ""):lower()
+                    if not (an:find("idle", 1, true) or an:find("walk", 1, true) or an:find("run", 1, true)
+                        or an:find("jump", 1, true) or an:find("fall", 1, true) or an:find("climb", 1, true)
+                        or an:find("swim", 1, true) or an:find("sit", 1, true)) then
+                        foundAction = true
+                        if desiredSpeed and desiredSpeed > 0 then
+                            pcall(tr.AdjustSpeed, tr, desiredSpeed)
+                        end
+                    end
+                end
+            end
+        end
+        return foundAction
     end
 
     local function ensureAnimsLoaded(char, hum, tool)
         if Combat.char == char and Combat.tool == tool and #Combat.tracks > 0 then return end
-        Combat.char = char; Combat.tool = tool; Combat.tracks = {}; Combat.trackIdx = 1
+        Combat.char = char; Combat.tool = tool; Combat.tracks = {}; Combat.trackIdx = 1; lastPlayingTrack = nil
         cacheCharJoints(char)
         local animator = hum:FindFirstChildOfClass("Animator") or Instance.new("Animator", hum)
         local seenIds = {}
@@ -5329,40 +5362,91 @@ do
     end
 
     function Combat.stepKinematics(dt)
-        local isPunching = Config.Active and (Config.AutoPunch or Config.AutoKillBoss)
+        local isPunching = Config.Active and (Config.AutoPunch or (Config.AutoKillBoss and not BossEngine.evadingAOE and not BossEngine.collectingChest))
         local char = Player.Character
         if not isPunching or not char then
-            if Combat.swingProgress < 1 then Combat.restoreJoints() end
+            if jointsModified or Combat.swingProgress < 1 then Combat.restoreJoints() end
             return
         end
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if not (hum and hum.Health > 0) then return end
+        if not (hum and hum.Health > 0) then
+            if jointsModified then Combat.restoreJoints() end
+            return
+        end
         cacheCharJoints(char)
+
+        -- Anti-Twist Guard: NEVER mutate Motor6D.C0 while a native Roblox punch AnimationTrack is playing!
+        -- Stacking C0 rotation on top of Animator Transform twists the right arm backwards.
+        local animBoostSpeed = Config.AutoKillBoss and 3.2 or 2.8
+        if isNativeActionAnimPlaying(hum, animBoostSpeed) then
+            if jointsModified then Combat.restoreJoints() end
+            return
+        end
+
         if next(Combat.joints) == nil then return end
 
-        local swingsPerSec = Config.AutoKillBoss and 11.0 or 7.5
-        if Combat.swingProgress < 1 then Combat.swingProgress = M.min(1, Combat.swingProgress + dt * swingsPerSec) end
+        local swingsPerSec = Config.AutoKillBoss and 14.0 or 11.0
+        if Combat.swingProgress < 1 then
+            Combat.swingProgress = M.min(1, Combat.swingProgress + M.min(dt, 0.05) * swingsPerSec)
+        end
+        if Combat.swingProgress >= 1 then
+            if jointsModified then Combat.restoreJoints() end
+            return
+        end
 
-        local pulse = M.sin(M.pi * Combat.swingProgress)
+        -- Clean symmetric zero-roll boxing jab-cross fallback (only when no native punch AnimationTrack is active)
+        local rawPulse = M.sin(M.pi * Combat.swingProgress)
+        local ext = rawPulse ^ 0.85
         local armSign = Combat.activeArm
         local j, o = Combat.joints, Combat.origC0
+        jointsModified = true
 
         if Combat.rigType == Enum.HumanoidRigType.R15 then
             if armSign == 1 then
-                if j.RShoulder and o.RShoulder then j.RShoulder.C0 = o.RShoulder * CFrame.new(0, 0.06 * pulse, -0.28 * pulse) * CFrame.Angles(math.rad(92 * pulse), math.rad(-14 * pulse), math.rad(-10 * pulse)) end
-                if j.RElbow and o.RElbow then j.RElbow.C0 = o.RElbow * CFrame.Angles(math.rad(18 * (1 - pulse)), 0, 0) end
-                if j.LShoulder and o.LShoulder then j.LShoulder.C0 = o.LShoulder * CFrame.Angles(math.rad(28 * pulse), math.rad(12 * pulse), math.rad(12 * pulse)) end
+                if j.RShoulder and o.RShoulder then
+                    j.RShoulder.C0 = o.RShoulder * CFrame.new(0, 0.04 * ext, -0.22 * ext) * CFrame.Angles(math.rad(82 * ext), math.rad(8 * ext), 0)
+                end
+                if j.RElbow and o.RElbow then
+                    j.RElbow.C0 = o.RElbow * CFrame.Angles(math.rad(20 * ext * (1 - ext)), 0, 0)
+                end
+                if j.LShoulder and o.LShoulder then
+                    j.LShoulder.C0 = o.LShoulder * CFrame.Angles(math.rad(24 * ext), 0, 0)
+                end
+                if j.LElbow and o.LElbow then
+                    j.LElbow.C0 = o.LElbow * CFrame.Angles(math.rad(32 * ext), 0, 0)
+                end
             else
-                if j.LShoulder and o.LShoulder then j.LShoulder.C0 = o.LShoulder * CFrame.new(0, 0.06 * pulse, -0.28 * pulse) * CFrame.Angles(math.rad(92 * pulse), math.rad(14 * pulse), math.rad(10 * pulse)) end
-                if j.LElbow and o.LElbow then j.LElbow.C0 = o.LElbow * CFrame.Angles(math.rad(18 * (1 - pulse)), 0, 0) end
-                if j.RShoulder and o.RShoulder then j.RShoulder.C0 = o.RShoulder * CFrame.Angles(math.rad(28 * pulse), math.rad(-12 * pulse), math.rad(-12 * pulse)) end
+                if j.LShoulder and o.LShoulder then
+                    j.LShoulder.C0 = o.LShoulder * CFrame.new(0, 0.04 * ext, -0.22 * ext) * CFrame.Angles(math.rad(82 * ext), math.rad(-8 * ext), 0)
+                end
+                if j.LElbow and o.LElbow then
+                    j.LElbow.C0 = o.LElbow * CFrame.Angles(math.rad(20 * ext * (1 - ext)), 0, 0)
+                end
+                if j.RShoulder and o.RShoulder then
+                    j.RShoulder.C0 = o.RShoulder * CFrame.Angles(math.rad(24 * ext), 0, 0)
+                end
+                if j.RElbow and o.RElbow then
+                    j.RElbow.C0 = o.RElbow * CFrame.Angles(math.rad(32 * ext), 0, 0)
+                end
             end
-            if j.UpperTorso and o.UpperTorso then j.UpperTorso.C0 = o.UpperTorso * CFrame.Angles(math.rad(4 * pulse), math.rad(14 * armSign * pulse), 0) end
+            if j.UpperTorso and o.UpperTorso then
+                j.UpperTorso.C0 = o.UpperTorso * CFrame.Angles(math.rad(3 * ext), math.rad(10 * armSign * ext), 0)
+            end
         else
-            if armSign == 1 and j.RShoulder and o.RShoulder then
-                j.RShoulder.C0 = o.RShoulder * CFrame.new(0, 0.08 * pulse, -0.32 * pulse) * CFrame.Angles(0, math.rad(15 * pulse), math.rad(92 * pulse))
-            elseif armSign == -1 and j.LShoulder and o.LShoulder then
-                j.LShoulder.C0 = o.LShoulder * CFrame.new(0, 0.08 * pulse, -0.32 * pulse) * CFrame.Angles(0, math.rad(-15 * pulse), math.rad(-92 * pulse))
+            if armSign == 1 then
+                if j.RShoulder and o.RShoulder then
+                    j.RShoulder.C0 = o.RShoulder * CFrame.new(0, 0.05 * ext, -0.24 * ext) * CFrame.Angles(0, 0, math.rad(82 * ext))
+                end
+                if j.LShoulder and o.LShoulder then
+                    j.LShoulder.C0 = o.LShoulder * CFrame.Angles(0, 0, math.rad(-18 * ext))
+                end
+            else
+                if j.LShoulder and o.LShoulder then
+                    j.LShoulder.C0 = o.LShoulder * CFrame.new(0, 0.05 * ext, -0.24 * ext) * CFrame.Angles(0, 0, math.rad(-82 * ext))
+                end
+                if j.RShoulder and o.RShoulder then
+                    j.RShoulder.C0 = o.RShoulder * CFrame.Angles(0, 0, math.rad(18 * ext))
+                end
             end
         end
     end
@@ -5371,21 +5455,31 @@ do
     local function triggerVisualSwing(char, hum, tool, speedVal)
         local now = M.clock()
         local isFast = Config.AutoKillBoss or (speedVal and speedVal > 80)
-        local swingsPerSec = isFast and M.clamp(5 + ((speedVal or 140) / 100), 6, 10) or 4.5
+        local swingsPerSec = isFast and M.clamp(7 + ((speedVal or 180) / 80), 8, 12) or 7.5
         if now - Combat.lastTrackTrigger < (1 / swingsPerSec) then return end
         Combat.lastTrackTrigger = now
         Combat.activeArm = -Combat.activeArm
         Combat.swingProgress = 0.01
-        if now - lastAnimPlay < 0.30 then return end
+
+        local minAnimGap = isFast and 0.14 or 0.18
+        if now - lastAnimPlay < minAnimGap then return end
         lastAnimPlay = now
         ensureAnimsLoaded(char, hum, tool)
         if #Combat.tracks > 0 then
             local tr = Combat.tracks[Combat.trackIdx]
             Combat.trackIdx = (Combat.trackIdx % #Combat.tracks) + 1
-            if tr and not tr.IsPlaying then
+            if tr then
                 pcall(function()
-                    local animSpeed = isFast and M.clamp(swingsPerSec * 0.28, 1.5, 2.8) or 1.5
-                    tr:Play(0.05, 1, animSpeed)
+                    if lastPlayingTrack and lastPlayingTrack ~= tr and lastPlayingTrack.IsPlaying then
+                        lastPlayingTrack:Stop(0.05)
+                    end
+                    local animSpeed = isFast and 3.2 or 2.7
+                    if not tr.IsPlaying then
+                        tr:Play(0.05, 1, animSpeed)
+                    else
+                        tr:AdjustSpeed(animSpeed)
+                    end
+                    lastPlayingTrack = tr
                 end)
             end
         end
@@ -5648,7 +5742,7 @@ do
                 if tool.Parent ~= char then pcall(function() tool.Parent = char end) end
             end
             local now = M.clock()
-            local actCd = focusBoss and 0.16 or 0.22
+            local actCd = focusBoss and 0.08 or 0.10
             if now - lastActivate >= actCd then
                 lastActivate = now
                 pcall(tool.Activate, tool)
@@ -5663,7 +5757,7 @@ do
             end
         end
         if not skipAnim then
-            triggerVisualSwing(char, hum, tool, focusBoss and 160 or 90)
+            triggerVisualSwing(char, hum, tool, focusBoss and 220 or 160)
         end
 
         local dualRealBoss = focusBoss and focusBoss.hasDamageHitbox == true
@@ -6132,15 +6226,14 @@ do
         if not explicitName and BossEngine.staticArenaParts[d] then return false, 0, false, nil end
         local floorY = bossFloorY or (bPos.Y - 6)
 
-        local isBeachBoss = (isEventBoss ~= true)
-
+        -- ALL bosses (Beach & Alien/Event): ignore the first 2 red frontal skills (player is safely behind boss head);
+        -- ONLY detect and dodge the yellow circular ultimate AOE!
         if not d:IsA("BasePart") then
             if d:IsA("Explosion") and (d.Position - bPos).Magnitude <= 190 then
                 local rawR = tonumber(d.BlastRadius) or 34
-                -- On Beach boss ignore small red-skill explosions; only dodge full yellow ultimate blasts
-                if isBeachBoss and rawR < 45 then return false, 0, false, nil end
-                local r = M.clamp(rawR + 22, 46, 116)
-                return true, r, true, {center = d.Position, isUltimate = (r >= 52), isBeam = false, explicitName = true}
+                if rawR < 45 then return false, 0, false, nil end
+                local r = M.clamp(rawR + 22, 52, 124)
+                return true, r, true, {center = d.Position, isUltimate = true, isBeam = false, explicitName = true}
             end
             return false, 0, false, nil
         end
@@ -6153,7 +6246,6 @@ do
 
         local wx, wy, wz = getPartWorldBox(d)
         local maxHoriz = M.max(wx, wz)
-        local minHoriz = M.min(wx, wz)
         if maxHoriz < 4.0 or wy > 16.0 then return false, 0, false, nil end
         local sz = maxHoriz * 0.5
 
@@ -6168,13 +6260,10 @@ do
 
         local col, hasSurfaceVis = extractPartVisualColor(d)
         if not col then
-            -- Remember currently invisible non-collidable parts near the boss so reused/pooled telegraphs are caught the instant they turn visible!
             BossEngine.seenHiddenParts[d] = true
             return false, 0, false, nil
         end
 
-        -- Fingerprint Beach Arena rarity theme parts (Common=plain, Rare=blue, Epic=purple, Rainbow=green/cyan/blue/purple) permanently!
-        -- Even when those same arena parts later recolor to Gold (Legendary), Red (Mythic), or cycle Rainbow, they stay blacklisted!
         if not explicitName and isArenaThemeColor(col) then
             BossEngine.staticArenaParts[d] = true
             return false, 0, false, nil
@@ -6182,14 +6271,17 @@ do
 
         local h, s, v = col:ToHSV()
         local isRedOrPink = (h <= 0.075 or h >= 0.82) and s >= 0.34 and v >= 0.38
-        local isBrightYellowOrange = (h > 0.075 and h <= 0.20) and s >= 0.34 and v >= 0.42
-        local isFlatGround = (wy <= 14.0) and ((maxHoriz / M.max(wy, 0.08)) >= 1.5)
-        local isBeamShape = (maxHoriz >= 16.0) and (minHoriz <= 16.0) and (wy <= 14.0)
-        local isCircleLike = (d:IsA("Part") and (d.Shape == Enum.PartType.Cylinder or d.Shape == Enum.PartType.Ball))
-            or (M.abs(wx - wz) <= maxHoriz * 0.24 and maxHoriz >= (isBrightYellowOrange and 6.0 or 18.0))
+        local isBrightYellowOrange = (h > 0.075 and h <= 0.21) and s >= 0.34 and v >= 0.42
+        -- Strictly ignore red/pink frontal skill telegraphs on EVERY boss!
+        if isRedOrPink and not isBrightYellowOrange then
+            return false, 0, false, nil
+        end
 
-        -- Non-yellow parts smaller than 10 studs are ignored; small growing inner yellow ultimate discs (>=4 studs) are kept for accurate % tracking!
-        if maxHoriz < 10.0 and not (isBrightYellowOrange and isFlatGround and isCircleLike) then
+        local isFlatGround = (wy <= 14.0) and ((maxHoriz / M.max(wy, 0.08)) >= 1.5)
+        local isCircleLike = (d:IsA("Part") and (d.Shape == Enum.PartType.Cylinder or d.Shape == Enum.PartType.Ball))
+            or (M.abs(wx - wz) <= maxHoriz * 0.24 and maxHoriz >= 6.0)
+
+        if not (isFlatGround and isCircleLike) then
             return false, 0, false, nil
         end
 
@@ -6198,79 +6290,38 @@ do
         local isDynamicSpawn = (spT ~= nil) and (spT >= (BossEngine.streamSettleUntil or 0))
         local wasPooledHidden = (BossEngine.seenHiddenParts[d] == true)
 
-        -- Never false-trigger on permanent boss body/crown/halo/aura parts (Legendary/Mythic/Rainbow bosses are gold/red/rainbow!)
         if inBoss and not isDynamicSpawn and not wasPooledHidden and not explicitName then
             return false, 0, false, nil
         end
 
-        -- Explicit AOE/Telegraph names
+        -- Explicit Ultimate AOE names (must be yellow or explicitly named ultimate)
         if explicitName then
-            local isYellowCirc = isCircleLike and isBrightYellowOrange
-            local isUlt = (hasKw(dLow, ULT_ATK_KW) or isYellowCirc or (isCircleLike and sz >= 24))
-            -- On Beach Boss: ignore the 2 frontal red skills; ONLY track/dodge the yellow ultimate AOE!
-            if isBeachBoss and not isUlt then
+            local isUlt = (hasKw(dLow, ULT_ATK_KW) or isBrightYellowOrange)
+            if not isUlt then
                 return false, 0, false, nil
             end
-            local isFast = (not isUlt) and (dLow:find("explosion", 1, true) or dLow:find("laser", 1, true) or dLow:find("beam", 1, true) or dLow:find("slam", 1, true) or dLow:find("cone", 1, true)) ~= nil
-            local beamDir = nil
-            if isBeamShape or dLow:find("laser", 1, true) or dLow:find("beam", 1, true) then
-                local lv = (wz >= wx) and d.CFrame.LookVector or d.CFrame.RightVector
-                local flat = lv * Vector3.new(1, 0, 1)
-                if flat.Magnitude > 0.1 then beamDir = flat.Unit end
-            end
-            return true, M.clamp(sz + 24, 44, 124), isFast, {
-                center = dPos, isUltimate = isUlt, isBeam = (beamDir ~= nil), beamDir = beamDir,
-                part = d, isCircle = isCircleLike, isYellowCircle = isYellowCirc, explicitName = true,
-            }
-        end
-
-        -- Color-based detection ONLY for genuinely dynamic telegraphs outside static arena scenery.
-        local isTranslucent = (d.Transparency >= 0.12 and d.Transparency < 0.96) or hasSurfaceVis
-        local inStaticScenery = isInsideStaticArenaScenery(d)
-
-        -- On Beach Boss: ONLY detect yellow circular ultimate AOE (ignore the 2 red frontal skills!)
-        if isBeachBoss then
-            local allowBeachYellow = (isDynamicSpawn or wasPooledHidden or (isFlatGround and isCircleLike and isTranslucent and maxHoriz >= 16.0))
-                and not inStaticScenery and isFlatGround and isCircleLike and isBrightYellowOrange
-            if not allowBeachYellow then
-                return false, 0, false, nil
-            end
-            -- NEVER return immediate=true for yellow ultimate: wait until >=58% charge!
             return true, M.clamp(sz + 24, 52, 134), false, {
                 center = dPos, isUltimate = true, isBeam = false, part = d,
-                isCircle = true, isRedRect = false, isYellowCircle = true,
-                explicitName = false,
+                isCircle = true, isRedRect = false, isYellowCircle = true, explicitName = true,
             }
         end
 
-        -- Event / Alien Boss: accept both red skills and yellow ultimates
-        local allowDynamic = (isDynamicSpawn or wasPooledHidden) and not inStaticScenery and (isRedOrPink or isBrightYellowOrange)
-        local allowEventPooled = (isEventBoss == true) and not inStaticScenery and isFlatGround and (isRedOrPink or isBrightYellowOrange) and (isTranslucent or d.Material == Enum.Material.Neon) and maxHoriz >= 16.0
+        -- Color-based detection: ONLY yellow circular ultimate AOE outside static arena scenery
+        local isTranslucent = (d.Transparency >= 0.12 and d.Transparency < 0.96) or hasSurfaceVis
+        local inStaticScenery = isInsideStaticArenaScenery(d)
+        local allowYellowUlt = isBrightYellowOrange and not inStaticScenery
+            and (isDynamicSpawn or wasPooledHidden or ((isTranslucent or d.Material == Enum.Material.Neon) and maxHoriz >= 14.0))
 
-        if not (allowDynamic or allowEventPooled) then
+        if not allowYellowUlt then
             return false, 0, false, nil
         end
 
-        if isFlatGround then
-            local isYellowCirc = isCircleLike and isBrightYellowOrange
-            local isUlt = isYellowCirc or (isCircleLike and sz >= 26)
-            return true, M.clamp(sz + 24, 44, 124), false, {
-                center = dPos, isUltimate = isUlt, isBeam = false, part = d,
-                isCircle = isCircleLike, isRedRect = (isRedOrPink and not isCircleLike),
-                isYellowCircle = isYellowCirc,
-                explicitName = false,
-            }
-        end
-
-        if isBeamShape and (isRedOrPink or isBrightYellowOrange) then
-            local lv = (wz >= wx) and d.CFrame.LookVector or d.CFrame.RightVector
-            local flat = lv * Vector3.new(1, 0, 1)
-            return true, M.clamp(minHoriz * 0.5 + 24, 38, 76), false, {
-                center = dPos, isUltimate = false, isBeam = (flat.Magnitude > 0.1),
-                beamDir = (flat.Magnitude > 0.1) and flat.Unit or nil, part = d,
-                explicitName = false,
-            }
-        end
+        -- NEVER mark immediate=true for yellow ultimate: wait until really close to hit (<1s / >=72% charge)!
+        return true, M.clamp(sz + 24, 52, 134), false, {
+            center = dPos, isUltimate = true, isBeam = false, part = d,
+            isCircle = true, isRedRect = false, isYellowCircle = true,
+            explicitName = false,
+        }
 
         return false, 0, false, nil
     end
@@ -6617,7 +6668,7 @@ do
                         end
                     end
                     local seqTotal = BossEngine.seqTotal or M.clamp(rem, 0.25, 8.0)
-                    local isUltByDur = isUltAtk or (seqTotal >= 2.0)
+                    local isUltByDur = isUltAtk or (seqTotal >= 1.85)
                     local isTelegraphedSkill = isSkillAtk or isUltByDur or (not isBasicOrIdle and seqTotal >= 0.35)
                     if isTelegraphedSkill and rem >= -0.25 and rem <= 8.0 then
                         local seqStart = BossEngine.seqStart or srvNow
@@ -6630,70 +6681,44 @@ do
                         chargeSig = "imp_" .. tostring(atkSeq or M.floor(atkImpact * 10))
                         BossEngine.lastAttackCF = (typeof(atkCF) == "CFrame") and atkCF or CFrame.new(bPos, bPos + (bossObj.part.CFrame.LookVector * Vector3.new(1, 0, 1)))
                         BossEngine.lastAttackRad = isUltByDur and M.max(baseAtkRad, 78) or M.max(baseAtkRad, 62)
-                        -- Beach boss: ONLY dodge the yellow ultimate AOE (ignore the 2 red frontal skills), and wait until >=58% charged!
-                        local shouldDodgeThis = (not isBeachBoss) or isUltByDur
-                        if shouldDodgeThis then
-                            local dodgePctGate = isUltByDur and 58 or 55
-                            local dodgeRemGate = isUltByDur and 0.85 or 0.55
-                            if pct < dodgePctGate and rem > dodgeRemGate then
+                        -- ALL bosses: ignore first 2 red frontal skills; dodge ONLY the yellow ultimate <1s before hit!
+                        if isUltByDur then
+                            if rem > 0.85 and (pct < 72 or rem > 1.05) then
                                 inFirstHalfCharge = true
                             else
                                 telegraphNow = true
                                 dangerRadius = M.max(dangerRadius, BossEngine.lastAttackRad)
-                                bestMeta = {center = hazardCenter, isUltimate = isUltByDur, isBeam = kindLow:find("beam") ~= nil or kindLow:find("laser") ~= nil}
-                                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + M.clamp(rem + 0.25, 0.25, 1.15))
+                                bestMeta = {center = hazardCenter, isUltimate = true, isBeam = false}
+                                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + M.clamp(rem + 0.22, 0.22, 1.05))
                             end
                         end
                     end
                 elseif atkSeq ~= nil then
                     if BossEngine.lastAttackSeq ~= nil and atkSeq ~= BossEngine.lastAttackSeq then
                         BossEngine.lastAttackSeq = atkSeq
-                        if (isUltAtk or (not isBeachBoss and isSkillAtk)) then
+                        if isUltAtk then
                             chargingDetected = true
-                            chargeKind = isUltAtk and "Ultimate" or "Skill"
-                            chargePct = M.max(chargePct, 58)
-                            chargeRem = isUltAtk and 0.95 or 0.55
+                            chargeKind = "Ultimate"
                             chargeSig = "seq_" .. tostring(atkSeq)
                             BossEngine.lastAttackCF = (typeof(atkCF) == "CFrame") and atkCF or bossObj.part.CFrame
-                            BossEngine.lastAttackRad = baseAtkRad
-                            if not isBeachBoss then
-                                telegraphNow = true
-                                dangerRadius = M.max(dangerRadius, baseAtkRad)
-                                bestMeta = {center = hazardCenter, isUltimate = isUltAtk, isBeam = false}
-                                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + (isUltAtk and 0.95 or 0.65))
-                            end
+                            BossEngine.lastAttackRad = M.max(baseAtkRad, 78)
                         end
                     elseif BossEngine.lastAttackSeq == nil then
                         BossEngine.lastAttackSeq = atkSeq
                     end
                 end
 
-                if numCharge ~= nil then
+                if numCharge ~= nil and isUltAtk then
                     local pct = M.clamp(numCharge * 100, 0, 100)
                     chargingDetected = true
-                    if isUltAtk then chargeKind = "Ultimate" end
+                    chargeKind = "Ultimate"
                     chargePct = M.max(chargePct, pct)
-                    if (not isBeachBoss) or isUltAtk then
-                        if pct < 58 then
-                            inFirstHalfCharge = true
-                        else
-                            telegraphNow = true; immediateNow = true
-                            dangerRadius = M.max(dangerRadius, isUltAtk and 62 or 40)
-                            bestMeta = bestMeta or {center = hazardCenter, isUltimate = isUltAtk, isBeam = false}
-                        end
-                    end
-                end
-
-                for ak, av in pairs(bossObj.model:GetAttributes()) do
-                    if isActiveDangerAttr(ak, av) and not inFirstHalfCharge then
-                        local aUlt = hasKw(tostring(ak):lower() .. " " .. tostring(av):lower(), ULT_ATK_KW)
-                        if (not isBeachBoss) or aUlt then
-                            if not isBeachBoss then
-                                telegraphNow = true; immediateNow = true
-                                dangerRadius = M.max(dangerRadius, aUlt and 62 or 38)
-                                bestMeta = bestMeta or {center = hazardCenter, isUltimate = aUlt, isBeam = false}
-                            end
-                        end
+                    if pct < 72 then
+                        inFirstHalfCharge = true
+                    else
+                        telegraphNow = true; immediateNow = true
+                        dangerRadius = M.max(dangerRadius, 78)
+                        bestMeta = bestMeta or {center = hazardCenter, isUltimate = true, isBeam = false}
                     end
                 end
 
@@ -6703,29 +6728,16 @@ do
                         local ratio = (nv.Value <= 1.05) and nv.Value or (nv.Value / 100)
                         local pct = M.clamp(ratio * 100, 0, 100)
                         local nUlt = nv.Name:lower():find("ult") ~= nil
-                        chargingDetected = true
-                        if nUlt then chargeKind = "Ultimate" end
-                        chargePct = M.max(chargePct, pct)
-                        if (not isBeachBoss) or nUlt then
-                            if pct < 58 then inFirstHalfCharge = true
+                        if nUlt then
+                            chargingDetected = true
+                            chargeKind = "Ultimate"
+                            chargePct = M.max(chargePct, pct)
+                            if pct < 72 then inFirstHalfCharge = true
                             else
                                 telegraphNow = true; immediateNow = true
-                                dangerRadius = M.max(dangerRadius, baseAtkRad)
-                                bestMeta = bestMeta or {center = hazardCenter, isUltimate = (chargeKind == "Ultimate"), isBeam = false}
+                                dangerRadius = M.max(dangerRadius, M.max(baseAtkRad, 78))
+                                bestMeta = bestMeta or {center = hazardCenter, isUltimate = true, isBeam = false}
                             end
-                        end
-                    end
-                end
-                for _, bv in ipairs(wEntry.bools) do
-                    if bv and bv.Parent and bv.Value == true then
-                        local bUlt = bv.Name:lower():find("ult") ~= nil
-                        chargingDetected = true
-                        if bUlt then chargeKind = "Ultimate" end
-                        if not isBeachBoss and not inFirstHalfCharge then
-                            chargePct = M.max(chargePct, 58)
-                            telegraphNow = true; immediateNow = true
-                            dangerRadius = M.max(dangerRadius, bUlt and 62 or baseAtkRad)
-                            bestMeta = bestMeta or {center = hazardCenter, isUltimate = bUlt, isBeam = false}
                         end
                     end
                 end
@@ -6734,41 +6746,18 @@ do
                         local tl = lbl.Text:gsub("<[^>]+>", " "):lower()
                         local pctNum = tonumber(tl:match("(%d+)%%"))
                         local lUlt = tl:find("ult") ~= nil or tl:find("meteor") ~= nil
-                        if pctNum and (tl:find("charg") or tl:find("ult") or tl:find("cast")) then
+                        if pctNum and lUlt then
                             chargingDetected = true
-                            if lUlt then chargeKind = "Ultimate" end
+                            chargeKind = "Ultimate"
                             chargePct = M.max(chargePct, M.clamp(pctNum, 0, 100))
-                            if (not isBeachBoss) or lUlt then
-                                if pctNum < 58 then inFirstHalfCharge = true
-                                else
-                                    telegraphNow = true; immediateNow = true
-                                    dangerRadius = M.max(dangerRadius, lUlt and 62 or 40)
-                                    bestMeta = bestMeta or {center = hazardCenter, isUltimate = lUlt, isBeam = false}
-                                end
-                            end
-                        elseif tl == "!" or hasKw(tl, DANGER_GUI_KW) then
-                            chargingDetected = true
-                            if lUlt then chargeKind = "Ultimate" end
-                            -- Beach boss "!" is the red frontal skill warning -> stay behind head and ignore!
-                            if not isBeachBoss and not inFirstHalfCharge then
-                                chargePct = M.max(chargePct, 60)
+                            if pctNum < 72 then inFirstHalfCharge = true
+                            else
                                 telegraphNow = true; immediateNow = true
-                                dangerRadius = M.max(dangerRadius, lUlt and 62 or 38)
-                                bestMeta = bestMeta or {center = hazardCenter, isUltimate = lUlt, isBeam = false}
+                                dangerRadius = M.max(dangerRadius, 78)
+                                bestMeta = bestMeta or {center = hazardCenter, isUltimate = true, isBeam = false}
                             end
                         end
-                    end
-                end
-                if not inFirstHalfCharge and not isBeachBoss then
-                    for _, hl in ipairs(wEntry.highlights) do
-                        local okH, radH, _, metaH = BossEngine.isDangerPart(hl, bossObj.model, bPos, bossFloorY, bossObj.isEvent == true)
-                        if okH then
-                            chargingDetected = true
-                            chargePct = M.max(chargePct, 58)
-                            telegraphNow = true
-                            dangerRadius = M.max(dangerRadius, radH)
-                            bestMeta = bestMeta or metaH
-                        end
+                        -- Ignore bare "!" warning labels: they fire for red skills AND at 0% of yellow ultimate!
                     end
                 end
 
@@ -6779,25 +6768,23 @@ do
                         local an = (tr.Animation and tr.Animation.Name or tr.Name):lower()
                         if not (an:find("idle", 1, true) or an:find("walk", 1, true) or an:find("run", 1, true)
                             or an:find("hover", 1, true) or an:find("punch", 1, true) or an:find("basic", 1, true))
-                            and hasKw(an, DANGER_ANIM_KW) then
+                            and hasKw(an, ULT_ATK_KW) then
                             local seenT = dangerAnimSeen[tr]
                             if not seenT then seenT = now; dangerAnimSeen[tr] = now end
                             local len, pos = tonumber(tr.Length) or 0, tonumber(tr.TimePosition) or 0
-                            local aUlt = hasKw(an, ULT_ATK_KW)
-                            local animPct = (len > 0) and M.clamp((pos / len) * 100, 0, 100) or M.clamp(((now - seenT) / 1.40) * 100, 0, 100)
+                            local animPct = (len > 0) and M.clamp((pos / len) * 100, 0, 100) or M.clamp(((now - seenT) / 2.10) * 100, 0, 100)
+                            local animRem = (len > 0) and M.max(0, len - pos) or M.max(0, 2.10 - (now - seenT))
                             chargingDetected = true
-                            if aUlt then chargeKind = "Ultimate" end
+                            chargeKind = "Ultimate"
                             chargePct = M.max(chargePct, animPct)
-                            if len > 0 then chargeRem = M.max(chargeRem, M.max(0, len - pos)) end
+                            chargeRem = M.max(chargeRem, animRem)
                             chargeSig = chargeSig or ("anim_" .. tostring(tr) .. "_" .. M.floor(seenT * 10))
-                            if (not isBeachBoss) or aUlt then
-                                if animPct >= 58 then
-                                    telegraphNow = true; immediateNow = true
-                                    dangerRadius = M.max(dangerRadius, aUlt and 62 or 38)
-                                    bestMeta = bestMeta or {center = bPos, isUltimate = aUlt, isBeam = false}
-                                else
-                                    inFirstHalfCharge = true
-                                end
+                            if animPct >= 72 or (len > 0 and animRem <= 0.80) then
+                                telegraphNow = true; immediateNow = true
+                                dangerRadius = M.max(dangerRadius, 78)
+                                bestMeta = bestMeta or {center = bPos, isUltimate = true, isBeam = false}
+                            else
+                                inFirstHalfCharge = true
                             end
                         end
                     end
@@ -6944,8 +6931,8 @@ do
                 local inst, rec, curSz = item.inst, item.rec, item.curSz
                 local isYellowPart = (rec.meta and rec.meta.isYellowCircle == true)
                 local isUltPart = isYellowPart or (rec.meta and rec.meta.isUltimate == true)
-                -- On Beach Boss strictly ignore anything that isn't the yellow ultimate AOE!
-                if not (isBeachBoss and not isUltPart) then
+                -- ALL bosses: strictly dodge ONLY the yellow ultimate AOE (never the 2 red frontal skills)!
+                if isUltPart then
                     local minCircleRad = (bossObj.isEvent and isYellowPart) and 70 or 0
                     local padR = bossObj.isEvent and 28 or 22
                     local minR = bossObj.isEvent and 52 or 48
@@ -6957,8 +6944,7 @@ do
                     if inst:IsA("BasePart") and #activePartList >= 2 then
                         for _, other in ipairs(activePartList) do
                             local otherYellow = (other.rec.meta and other.rec.meta.isYellowCircle == true)
-                            local sameKind = (isYellowPart == otherYellow)
-                            if other.inst ~= inst and sameKind and other.inst:IsA("BasePart") then
+                            if other.inst ~= inst and otherYellow == isYellowPart and other.inst:IsA("BasePart") then
                                 local dxO = other.inst.Position.X - inst.Position.X
                                 local dzO = other.inst.Position.Z - inst.Position.Z
                                 if (dxO * dxO + dzO * dzO) <= (28 * 28) then
@@ -6975,10 +6961,9 @@ do
                     end
 
                     local partAge = now - (rec.seen or now)
-                    local partUlt = isUltPart or (curSz >= 26) or (rad >= 64)
-                    if partUlt then chargeKind = "Ultimate" end
+                    chargeKind = "Ultimate"
                     chargingDetected = true
-                    local estDur = partUlt and 2.30 or 1.15
+                    local estDur = bossObj.isEvent and 2.15 or 2.30
                     if ringPct ~= nil then
                         chargePct = M.max(chargePct, ringPct)
                         chargeRem = M.max(chargeRem, M.max(0, (1 - ringPct / 100) * estDur))
@@ -6989,15 +6974,14 @@ do
                     end
                     chargeSig = chargeSig or ("part_" .. tostring(M.floor((rec.seen or now) * 2)))
 
-                    -- Wait until HALF or CLOSER (~58% charge) before dodging, then STAY OUTSIDE until the yellow circle vanishes!
+                    -- Dodge REALLY CLOSE to ultimate impact (~<=0.85s before hit: >=72% dual-ring fill or >=1.38s single-disc age)!
                     local readyToDodge = false
                     if isImm and not isYellowPart then
                         readyToDodge = true
                     elseif ringPct ~= nil then
-                        readyToDodge = (ringPct >= (partUlt and 58 or 55))
+                        readyToDodge = (ringPct >= 72)
                     else
-                        -- Single-disc fallback: dodge at ~54-58% of charge duration (~1.25s on 2.3s yellow ultimate)
-                        readyToDodge = (partAge >= (partUlt and 1.25 or 0.60))
+                        readyToDodge = (partAge >= (bossObj.isEvent and 1.32 or 1.42))
                     end
 
                     if readyToDodge then
@@ -7006,9 +6990,9 @@ do
                             dangerRadius = rad
                             bestMeta = {
                                 center = inst:IsA("BasePart") and inst.Position or (rec.meta and rec.meta.center or bPos),
-                                isUltimate = partUlt,
-                                isBeam = rec.meta and rec.meta.isBeam or false,
-                                beamDir = rec.meta and rec.meta.beamDir or nil,
+                                isUltimate = true,
+                                isBeam = false,
+                                beamDir = nil,
                                 part = inst:IsA("BasePart") and inst or nil,
                             }
                         end
@@ -7020,10 +7004,10 @@ do
             if telegraphNow then
                 BossEngine.wasTelegraphActive = true
                 if immediateNow then BossEngine.wasImmediateHazard = true end
-                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.28)
+                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.22)
             elseif BossEngine.wasTelegraphActive then
                 BossEngine.wasTelegraphActive = false
-                local holdDur = BossEngine.wasImmediateHazard and 0.32 or 0.25
+                local holdDur = BossEngine.wasImmediateHazard and 0.24 or 0.20
                 BossEngine.wasImmediateHazard = false
                 BossEngine.postAttackHoldUntil = M.max(BossEngine.postAttackHoldUntil, now + holdDur)
             end
@@ -7074,11 +7058,11 @@ do
             pingHeadroom = Telemetry.livePing - Telemetry.baselinePing
         end
         local punchRate
-        local maxStrikes = 1
+        local maxStrikes = 2
         if target.hasDamageHitbox then
-            punchRate = (pingHeadroom > 95) and 7.0 or 12.0
+            punchRate = (pingHeadroom > 95) and 14.0 or 24.0
         else
-            punchRate = (pingHeadroom > 95) and 5.0 or 7.5
+            punchRate = (pingHeadroom > 95) and 10.0 or 16.0
         end
         bossPunchAcc += punchRate * M.min(dt, 0.05)
         local strikes = M.min(M.floor(bossPunchAcc), maxStrikes)
@@ -7655,7 +7639,7 @@ do
             if needPick then
                 if not BossEngine.evadingAOE then
                     BossEngine.evadeStartedAt = now
-                    BossEngine.evadeMinUntil = now + (isUlt and 0.55 or 0.45)
+                    BossEngine.evadeMinUntil = now + 0.42
                 end
                 local candidates = {}
                 local radii = {
@@ -7780,12 +7764,12 @@ do
             headTopSurfaceY = headPos.Y
             headDepth = 2.5
         end
-        -- Position FAR BEHIND & ABOVE the boss's head so the 2 red frontal skills never hit the player!
+        -- Position FAR BEHIND & ABOVE the boss's head so the 2 red frontal skills never hit on Beach OR Alien Boss!
         local bodySpan = (target.bodyStats and target.bodyStats.maxSpan) or 18
         local isBeachTgt = (target.isEvent ~= true)
         local behindHeadOff = isBeachTgt
             and M.clamp(headDepth + bodySpan * 0.70 + 12, 20, 36)
-            or  M.clamp(headDepth + bodySpan * 0.45 + 8, 14, 24)
+            or  M.clamp(headDepth + bodySpan * 0.65 + 10, 18, 32)
         local backHeadPos = Vector3.new(headPos.X - faceDir.X * behindHeadOff, headPos.Y, headPos.Z - faceDir.Z * behindHeadOff)
 
         local headYPad = isBeachTgt and 2.2 or 1.5
@@ -8415,9 +8399,37 @@ do
     local fogConn, potatoConn, pingBoostConn, aiPerfConn = nil, nil, nil, nil
     local potatoBackup = {}
     local lastAppliedFFlagCap = nil
+    local blackRenderGui = nil
 
     function Perf.setDisable3DRender(on)
         local wantOff = (on == true) and Config.Active
+        if wantOff then
+            if not (blackRenderGui and blackRenderGui.Parent) then
+                blackRenderGui = UILib.new("ScreenGui", {
+                    ResetOnSpawn = false,
+                    DisplayOrder = 40,
+                    IgnoreGuiInset = true,
+                    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+                })
+                Core.protectGui(blackRenderGui)
+                UILib.new("Frame", {
+                    Size = UDim2.new(1, 0, 1, 0),
+                    Position = UDim2.new(0, 0, 0, 0),
+                    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+                    BackgroundTransparency = 0,
+                    BorderSizePixel = 0,
+                    Active = false,
+                    ZIndex = 1,
+                }, blackRenderGui)
+            else
+                blackRenderGui.Enabled = true
+            end
+        else
+            if blackRenderGui then
+                pcall(function() blackRenderGui:Destroy() end)
+                blackRenderGui = nil
+            end
+        end
         pcall(function()
             if RunService.Set3dRenderingEnabled then
                 RunService:Set3dRenderingEnabled(not wantOff)
@@ -9740,7 +9752,7 @@ do
     Telemetry.punchTracker = Telemetry.newTracker()
 end
 ----------------------------------------------------------------
--- Centered, Moveable NEURAL AI SCANNER v3 (Turbo Parallel Zero-Freeze + Threat Detection)
+-- Centered, Moveable NEURAL AI SCANNER v4 (Turbo Parallel Zero-Freeze + Threat & Subsystem Audit)
 ----------------------------------------------------------------
 local ThreatScanner = {
     playerCache = {},
@@ -9832,6 +9844,12 @@ do
                 end
             end
         end
+        pcall(function()
+            if plr.Team and plr.Team.Name ~= "" then
+                local tKw = matchStaffKw(plr.Team.Name)
+                if tKw then reasons[#reasons + 1] = "Staff Team: " .. plr.Team.Name end
+            end
+        end)
         for _, nStr in ipairs({plr.Name, plr.DisplayName}) do
             if nStr and (nStr:find("%[") or nStr:find("_")) then
                 local kw = matchStaffKw(nStr)
@@ -9929,7 +9947,7 @@ do
 
         UILib.new("TextLabel", {
             Size = UDim2.new(1, -124, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
-            Text = "🌸 Yui Hub  |  NEURAL AI SCANNER v3 [TURBO]",
+            Text = "🌸 Yui Hub  |  NEURAL AI SCANNER v4 [TURBO]",
             TextColor3 = Theme.Text, Font = Enum.Font.GothamBold, TextSize = 10, TextXAlignment = Enum.TextXAlignment.Left,
         }, TopHeader)
 
@@ -9968,7 +9986,7 @@ do
 
         local StatusText = UILib.new("TextLabel", {
             Size = UDim2.new(1, -20, 0, 15), Position = UDim2.fromOffset(10, 65), BackgroundTransparency = 1,
-            Text = "[AI-v3] Running parallel zero-freeze VM, remote, arena & staff audit...",
+            Text = "[AI-v4] Running parallel VM, popup-shield, boss-evade, punch & staff audit...",
             TextColor3 = Theme.CyberCyan, Font = Enum.Font.GothamMedium, TextSize = 9, TextXAlignment = Enum.TextXAlignment.Left,
         }, Card)
 
@@ -10303,27 +10321,30 @@ do
                 end)
             end)
 
+            local scanMs = M.floor((M.clock() - syncT0) * 1000)
             local mRem, rRem = Remotes.muscleList[1], Remotes.rebirthList[1]
             local hasTouch = (firetouchinterest ~= nil)
             local hasFps = (setfpscap ~= nil or set_fps_cap ~= nil or setfps ~= nil or setfflag ~= nil)
             local hasConn = (getconnections ~= nil or firesignal ~= nil)
             local hasFiles = (writefile ~= nil and isfile ~= nil)
+            local has3dToggle = (RunService.Set3dRenderingEnabled ~= nil)
+            local hasPunchTool = (Remotes.findPunchTool() ~= nil)
             local rewTotal = #Remotes.questRemotes + #Remotes.dailyRemotes + #Remotes.chestRemotes + #Remotes.genericRewardRemotes + #Remotes.timeRewardRemotes
             local charRig = (Player.Character and Player.Character:FindFirstChildOfClass("Humanoid") and Player.Character:FindFirstChildOfClass("Humanoid").RigType.Name) or "R15"
 
             local steps = {
-                {"[1/12] Benchmarking VM & Memory Footprint...", "PERFECT", "Executor VM & Memory Profiler", M.fmtStr("%s | %d µs | Total: %dMB · Heap: %.1fMB", Core.ExecutorName, benchUs, memMb, collectgarbage("count") / 1024)},
-                {"[2/12] Auditing Native Executor Bridge...", (hasTouch and hasFps) and "PERFECT" or "PARTIAL", "Native Bridge API Matrix", M.fmtStr("touch=%s | fps=%s | conn=%s | fs=%s", tostring(hasTouch), tostring(hasFps), tostring(hasConn), tostring(hasFiles))},
+                {"[1/12] Benchmarking VM & Memory Footprint...", "PERFECT", "Executor VM & Memory Profiler", M.fmtStr("%s | %d µs | Audit: %dms | Mem: %dMB", Core.ExecutorName, benchUs, scanMs, memMb)},
+                {"[2/12] Auditing Native Executor Bridge...", (hasTouch and hasFps) and "PERFECT" or "PARTIAL", "Native Bridge API Matrix", M.fmtStr("touch=%s | fps=%s | conn=%s | 3d=%s | fs=%s", tostring(hasTouch), tostring(hasFps), tostring(hasConn), tostring(has3dToggle), tostring(hasFiles))},
                 {"[3/12] Fingerprinting Game & ML Copy...", MuscleScope.verified and "PERFECT" or "PARTIAL", "ML & Copy Signature", M.fmtStr("PlaceId: %d | %s", game.PlaceId, MuscleScope.label)},
                 {"[4/12] Indexing Remote Surface & Anti-Trap...", mRem and "PERFECT" or "PARTIAL", "Shallow-First Remote Registry", M.fmtStr("Audited %d remotes | Muscle=%s | Rebirth=%s", Remotes.totalRemotesAudited, mRem and mRem.Name or "Dynamic", rRem and rRem.Name or "Dynamic")},
-                {"[5/12] Calibrating Zero-Freeze Reps Engine...", "PERFECT", "Zero-Freeze Reps (Frame-Slice Guard)", "Hoisted O(1) fire loops + Adaptive frame-time slice + 0ms stop"},
+                {"[5/12] Arming Zero-Lag Reps + 4-Layer Popup Shield...", hasConn and "PERFECT" or "PARTIAL", "Fast Reps + Str/Dura/Agi Popup Shield", "Native toggle + OnClientEvent mute + LocalScript pause + 1.4ms ring queue"},
                 {"[6/12] Verifying 6.00s Auto Rebirth Guard...", rRem and "PERFECT" or "PARTIAL", "Legit 6.00s Auto Rebirth", "Server phase-lock + Smart Strength threshold verification"},
                 {"[7/12] Auditing Quest, Playtime, Daily & Wheel...", (rewTotal > 0 or #Remotes.wheelRemotes > 0) and "PERFECT" or "PARTIAL", "Auto Collect & Wheel Engine", M.fmtStr("Quest=%d | Gift=%d | Daily=%d | Wheel=%d (Staggered Zero-Lag)", #Remotes.questRemotes, #Remotes.timeRewardRemotes, #Remotes.dailyRemotes, #Remotes.wheelRemotes)},
-                {"[8/12] Calibrating Auto Punch & Freeze...", hasTouch and "PERFECT" or "PARTIAL", "Clean Auto Punch + Character Freeze", "Fixed fast cadence + synced hand touch + smooth rig kinematics"},
-                {"[9/12] Mapping Boss Arena & Floor Evade...", "PERFECT", "Boss Auto-Kill + Multi-Ring Floor Evade", M.fmtStr("%d active boss(es) | Red rect & Yellow AOE OBB solver ready", #Combat.bossTargets)},
-                {"[10/12] Initializing Zero-Freeze Perf Engine...", hasFps and "PERFECT" or "PARTIAL", "Perf Stats & Chunked Potato GFX", "1% Low FPS, Jitter, Net I/O, Mem GC Purge & 3D Render Saver"},
+                {"[8/12] Calibrating Turbo Auto Punch + Anti-Twist...", (hasTouch and hasPunchTool) and "PERFECT" or "PARTIAL", "Turbo Auto Punch + Anti-Twist Rig", M.fmtStr("PunchTool=%s | 22-24/s cadence | Zero-twist C0/Animator guard", tostring(hasPunchTool))},
+                {"[9/12] Mapping Boss Arena & Late Yellow-Ult Evade...", "PERFECT", "Boss Auto-Kill + Late Yellow-Ult Evade", M.fmtStr("%d active boss(es) | Red ignored · Yellow Ult <1s dodge · Expanded hitbox", #Combat.bossTargets)},
+                {"[10/12] Initializing OLED Black 3D Saver & Perf...", (hasFps and has3dToggle) and "PERFECT" or "PARTIAL", "Perf Stats + OLED Black 3D Saver", "Pitch-black #000000 battery saver + 1% Low FPS, Jitter, Net I/O & GC Purge"},
                 {"[11/12] Arming Anti-AFK & Stealth Settings...", "PERFECT", "Settings Anti-AFK + Avatar Visuals", M.fmtStr("Rig=%s | VirtualUser + Keepalive Anti-AFK (ON by default)", charRig)},
-                {"[12/12] Finalizing Full-Server Staff Audit...", (#detectedThreats > 0) and "RESTRICTED" or "PERFECT", "Parallel Staff / Admin Threat Audit", (#detectedThreats > 0) and M.fmtStr("ALERT: %d Threat(s) in server! Inspect Threats tab", #detectedThreats) or M.fmtStr("Clean Server: 0 Threats across %d player(s)", playerCount)},
+                {"[12/12] Finalizing Full-Server Staff Audit...", (#detectedThreats > 0) and "RESTRICTED" or "PERFECT", "Parallel Staff / Admin Threat Audit", (#detectedThreats > 0) and M.fmtStr("ALERT: %d Threat(s) in server! Inspect Threats tab", #detectedThreats) or M.fmtStr("Clean Server: 0 Threats across %d player(s) (Team+Group+Attr)", playerCount)},
             }
 
             local stepWait = 0.085
@@ -10351,7 +10372,7 @@ do
                 ProceedBtn.BackgroundColor3 = Theme.ThreatRed
                 proceedStroke.Color = Theme.Yellow
             else
-                StatusText.Text = M.fmtStr("[AI-v3 READY] ✅ %d Optimal | ⚡ %d Partial | Score %d%% | 0 Threats", counts.PERFECT, counts.PARTIAL, finalScore)
+                StatusText.Text = M.fmtStr("[AI-v4 READY] ✅ %d Optimal | ⚡ %d Partial | Score %d%% | 0 Threats", counts.PERFECT, counts.PARTIAL, finalScore)
                 StatusText.TextColor3 = Theme.Green
                 SummaryLabel.Text = "12/12 Turbo AI checks passed & Server clean. Tap LAUNCH HUB."
                 SummaryLabel.TextColor3 = Theme.CyberCyan
@@ -10369,7 +10390,7 @@ do
                 rescanning = true
                 Core.playMeowSFX()
                 RescanBtn.Text = "⏳ ..."
-                StatusText.Text = "[AI-v3] Re-scanning server players & remote surface..."
+                StatusText.Text = "[AI-v4] Re-scanning server players & remote surface..."
                 StatusText.TextColor3 = Theme.CyberCyan
                 task.spawn(function()
                     pcall(Remotes.refresh, true)
@@ -10669,7 +10690,7 @@ do
             end
         end
 
-        createToggle(P, "Punch", "Auto Punch", "AutoPunch", nil, onPunchChanged, "smooth arm swing + low-ping hit")
+        createToggle(P, "Punch", "Auto Punch", "AutoPunch", nil, onPunchChanged, "turbo alternating punch + anti-twist smooth animation")
         createToggle(P, "Punch", "Freeze Character", "FreezeCharacter", nil, function(on)
             CharPhysics.applyFreeze(on)
         end, "locks character firmly in place (toggle on/off anytime)")
@@ -10881,8 +10902,8 @@ do
             "headroom-only incremental GC, physics sleep & frame-protect (no gfx change)")
         createToggle(P, "Perf Stats", "🥔 FPS Booster (Chunked Potato GFX · Zero-Freeze)", "FPSBoost", nil, Perf.setFPSBoost,
             "time-budgeted apply & restore so toggling ON/OFF never freezes")
-        createToggle(P, "Perf Stats", "🖥️ Disable 3D Rendering (AFK Ultra-FPS Saver)", "Disable3DRender", nil, Perf.setDisable3DRender,
-            "turns off 3D viewport for max AFK FPS & battery (auto-restores on OFF)")
+        createToggle(P, "Perf Stats", "🖥️ Disable 3D Rendering (OLED Black Battery Saver)", "Disable3DRender", nil, Perf.setDisable3DRender,
+            "pure pitch-black screen + 3D off for max AFK FPS & battery health")
         createToggle(P, "Perf Stats", "🌫️ Remove Fog & Atmosphere", "RemoveFog", nil, Perf.setRemoveFog)
         createToggle(P, "Perf Stats", "📡 Ping Booster (Replication Focus & 0ms Lag)", "PingBoost", nil, Perf.setPingBoost)
         createNumberInput(P, "FPS Cap (0 = Unlocked | Max: 1000)", "FPSCap", 0, 1000, false, function(v) Perf.applyFPSCap(v, false) end)
@@ -11231,16 +11252,15 @@ local function startLoops()
         elseif d:IsA("Explosion") then
             if Config.AutoKillBoss and BossEngine.currentBossModel then
                 local tgtObj = BossEngine.currentTargetObj
-                local isEv = (tgtObj and tgtObj.isEvent == true)
                 local rawBlast = tonumber(d.BlastRadius) or 0
-                if isEv or rawBlast >= 45 then
+                if rawBlast >= 45 then
                     local bRoot = tgtObj and (tgtObj.part or tgtObj.head) or BossEngine.currentBossModel.PrimaryPart
                     if bRoot and bRoot.Parent and (d.Position - bRoot.Position).Magnitude <= 160 then
                         local nowS = M.clock()
                         BossEngine.wasTelegraphActive = true
                         BossEngine.wasImmediateHazard = true
-                        BossEngine.aoeFlagUntil = nowS + 0.35
-                        BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, nowS + 0.35)
+                        BossEngine.aoeFlagUntil = nowS + 0.28
+                        BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, nowS + 0.28)
                     end
                 end
             end
@@ -11971,9 +11991,12 @@ local function startLoops()
                         local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
                         if root then Combat.refreshTargets(root.Position, false) end
                     end
-                    punchAcc += dt
-                    if punchAcc >= 0.095 then
-                        punchAcc = 0; rightHandNext = not rightHandNext
+                    local pingDelta = (Telemetry.livePing or 0) - (Telemetry.baselinePing or 65)
+                    local stepInt = (pingDelta > 95) and 0.075 or 0.045
+                    punchAcc = M.min(punchAcc + M.min(dt, 0.05), stepInt * 2)
+                    while punchAcc >= stepInt do
+                        punchAcc -= stepInt
+                        rightHandNext = not rightHandNext
                         if Combat.executeStrike(rightHandNext, 1, false, nil) then
                             Telemetry.punchesTotal += 1; Telemetry.recordEvent(Telemetry.punchTracker, 1)
                         end
