@@ -8647,18 +8647,114 @@ do
             Perf.applyFPSCap(Config.FPSCap, false)
         end
     end
+end
 
-    local lastPopupAllowT, lastRepSoundAllowT = 0, 0
-    local PROTECTED_GUI_KW = {"chat", "touchgui", "boss", "shop", "store", "quest", "wheel", "spin", "fortune", "inventory", "trade", "clans", "mastery", "benefits", "packs", "codes", "settings", "rebirth", "daily", "login", "streak", "calendar", "playtime", "reward", "gift"}
-    local POPUP_GUI_KW = {"effect", "popup", "gain", "float", "statuseffect", "stateffect"}
+----------------------------------------------------------------
+-- Fast-Rep Zero-Lag Stat Popup Shield (Strength / Durability-Endurance / Agility)
+-- 4-Layer Source-Stop Engine:
+--   1. Native "Show Popups" / "Mostrar ventanas emergentes" auto-disable
+--   2. Safe OnClientEvent mute for popup-only remotes (getconnections)
+--   3. Popup ScreenGui & nested container suppression + LocalScript pause + burst detection
+--   4. Zero-allocation ring-queue deferred destroy (1.4ms/frame cap) + sound guard
+----------------------------------------------------------------
+do
+    local DESTROY_BUDGET_SEC = 0.0014
+    local MAX_DESTROY_QUEUE  = 2048
+    local BURST_WINDOW_SEC   = 0.40
+    local BURST_THRESHOLD    = 4
+
+    local PROTECTED_GUI_KW = {
+        "chat", "touchgui", "boss", "shop", "store", "quest", "wheel", "spin", "fortune",
+        "inventory", "trade", "clans", "mastery", "benefits", "packs", "codes", "settings",
+        "rebirth", "daily", "login", "streak", "calendar", "playtime", "reward", "gift",
+        "topbar", "backpack", "playerlist", "freecam",
+    }
+    -- UNVERIFIED HEURISTICS: common Muscle Legends / ML-copy names isolated here.
+    -- Dynamic burst detection catches custom-named copies automatically.
+    local POPUP_GUI_EXACT = {
+        stateffectsgui = true, stateffects = true, statpopupgui = true, statpopupsgui = true,
+        popupgui = true, popupsgui = true, floatingstatsgui = true, statgainpopupgui = true,
+        effectsgui = true,
+    }
+    local POPUP_GUI_KW = {"stateffect", "statuseffect", "statpopup", "popup", "gainpopup", "floatingstat", "effect", "gain", "float"}
+    local STAT_POPUP_KW = {
+        "strength", "fuerza", "str",
+        "durability", "durabilidad", "endurance", "resistencia", "dura",
+        "agility", "agilidad", "speed", "velocidad", "agi",
+        "stateffect", "statpopup", "popup", "gain", "float",
+    }
+    local POPUP_TEMPLATE_NAMES = {
+        strengthframe = true, durabilityframe = true, enduranceframe = true,
+        agilityframe = true, speedframe = true, strengthpopup = true,
+        durabilitypopup = true, endurancepopup = true, agilitypopup = true,
+        stateffect = true, statpopup = true, gainpopup = true,
+    }
+    local POPUP_REMOTE_ALLOW = {
+        "stateffect", "stat_effect", "statpopup", "stat_popup", "popup",
+        "gainpopup", "floatingtext", "showpopup", "showeffect",
+    }
+    local POPUP_REMOTE_BLOCK = {
+        "muscle", "rep", "lift", "workout", "train", "rebirth", "prestige",
+        "punch", "combat", "boss", "quest", "gift", "daily", "chest",
+        "wheel", "spin", "shop", "pet", "egg", "trade", "data", "save", "setting",
+    }
+    local NATIVE_TOGGLE_LABELS = {
+        "show popups", "stat popups", "stat effects", "popups",
+        "mostrar ventanas emergentes", "ventanas emergentes",
+    }
+    local NATIVE_BOOL_NAMES = {
+        showpopups = true, popups = true, showstateffects = true,
+        stateffects = true, ventanasemergentes = true,
+    }
+
+    local PS = {
+        active = false,
+        conns = {},
+        watchedGuis = setmetatable({}, {__mode = "k"}),
+        suppressedHosts = setmetatable({}, {__mode = "k"}),
+        suppressedContainers = setmetatable({}, {__mode = "k"}),
+        burstByContainer = setmetatable({}, {__mode = "k"}),
+        disabledGuis = {},
+        disabledContainers = {},
+        disabledScripts = {},
+        hiddenTemplates = {},
+        mutedConns = {},
+        origBools = {},
+        origAttrs = {},
+        flippedNativeBtn = nil,
+        nativeSynced = false,
+        lastNativeSync = -100,
+        lastSoundAllowT = 0,
+        q = {},
+        qHead = 1,
+        qTail = 0,
+        summary = "Idle",
+    }
+
+    local function cleanGuiStr(txt)
+        return tostring(txt or ""):gsub("<[^>]+>", ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    end
+
+    local function hasAnySub(strLow, list)
+        if not strLow or strLow == "" then return false end
+        for i = 1, #list do
+            if strLow:find(list[i], 1, true) then return true end
+        end
+        return false
+    end
+
+    local function isOwnHubObj(inst)
+        if not inst then return false end
+        if Runtime.UI.GUI and (inst == Runtime.UI.GUI or inst:IsDescendantOf(Runtime.UI.GUI)) then return true end
+        if Runtime.UI.ToggleGui and (inst == Runtime.UI.ToggleGui or inst:IsDescendantOf(Runtime.UI.ToggleGui)) then return true end
+        if Runtime.SoundContainer and (inst == Runtime.SoundContainer or inst:IsDescendantOf(Runtime.SoundContainer)) then return true end
+        return false
+    end
 
     local function isProtectedGuiName(nameStr)
         local nl = tostring(nameStr or ""):lower()
-        if nl == "" then return false end
-        for _, skipKw in ipairs(PROTECTED_GUI_KW) do
-            if nl:find(skipKw, 1, true) then return true end
-        end
-        return false
+        if nl == "" or POPUP_GUI_EXACT[nl] then return false end
+        return hasAnySub(nl, PROTECTED_GUI_KW)
     end
 
     local function hasProtectedGuiAncestor(d, sg)
@@ -8681,19 +8777,439 @@ do
         return false
     end
 
-    function Perf.handleRepAntiLagDesc(d)
-        if not (Config.Active and Config.RepAntiLag and Runtime.RepGateOpen and (Config.FastRep or Config.AIFastRep)) then return end
-        if not (d and d.Parent) then return end
-        if (Runtime.UI.GUI and d:IsDescendantOf(Runtime.UI.GUI)) or (Runtime.UI.ToggleGui and d:IsDescendantOf(Runtime.UI.ToggleGui)) or (Runtime.SoundContainer and d:IsDescendantOf(Runtime.SoundContainer)) then
+    local function queuePopupDestroy(inst)
+        if not (inst and inst.Parent) then return end
+        local size = PS.qTail - PS.qHead + 1
+        if size >= MAX_DESTROY_QUEUE then
+            local old = PS.q[PS.qHead]
+            PS.q[PS.qHead] = nil
+            PS.qHead += 1
+            if old and old.Parent then pcall(old.Destroy, old) end
+        end
+        PS.qTail += 1
+        PS.q[PS.qTail] = inst
+    end
+
+    local function looksLikeStatPopup(inst)
+        if not (inst and inst:IsA("GuiObject")) then return false end
+        local nl = tostring(inst.Name or ""):lower()
+        if POPUP_TEMPLATE_NAMES[nl] or hasAnySub(nl, STAT_POPUP_KW) then
+            return true
+        end
+        if inst:IsA("TextLabel") or inst:IsA("TextButton") then
+            local okT, rawT = pcall(function() return inst.Text end)
+            if okT and type(rawT) == "string" and #rawT > 0 and #rawT <= 56 then
+                local tl = cleanGuiStr(rawT)
+                if tl:match("^%+%s*[%d%.,]") or hasAnySub(tl, STAT_POPUP_KW) then
+                    return true
+                end
+            end
+        end
+        for _, ch in ipairs(inst:GetChildren()) do
+            if ch:IsA("TextLabel") or ch:IsA("TextButton") then
+                local okT, rawT = pcall(function() return ch.Text end)
+                if okT and type(rawT) == "string" and #rawT > 0 and #rawT <= 56 then
+                    local tl = cleanGuiStr(rawT)
+                    if tl:match("^%+%s*[%d%.,]") or hasAnySub(tl, STAT_POPUP_KW) then
+                        return true
+                    end
+                end
+            elseif ch:IsA("ImageLabel") then
+                local cl = tostring(ch.Name or ""):lower()
+                if hasAnySub(cl, STAT_POPUP_KW) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function suppressPopupScreenGui(sg)
+        if not (sg and sg.Parent and sg:IsA("ScreenGui")) then return end
+        if isOwnHubObj(sg) or isProtectedGuiName(sg.Name) then return end
+
+        if PS.disabledGuis[sg] == nil then
+            PS.disabledGuis[sg] = sg.Enabled
+        end
+        if sg.Enabled then
+            pcall(function() sg.Enabled = false end)
+        end
+
+        -- Pause LocalScripts housed inside this popup ScreenGui to stop :Clone() & TweenService at the source
+        for _, desc in ipairs(sg:GetDescendants()) do
+            if desc:IsA("LocalScript") and PS.disabledScripts[desc] == nil then
+                PS.disabledScripts[desc] = desc.Disabled
+                pcall(function() desc.Disabled = true end)
+            end
+        end
+
+        if not PS.suppressedHosts[sg] then
+            PS.suppressedHosts[sg] = true
+            PS.summary = "ScreenGui: " .. sg.Name
+
+            for _, ch in ipairs(sg:GetChildren()) do
+                if ch:IsA("GuiObject") and not hasProtectedGuiDescendant(ch) then
+                    pcall(function() ch.Visible = false end)
+                    if looksLikeStatPopup(ch) then
+                        queuePopupDestroy(ch)
+                    end
+                end
+            end
+
+            -- Zero-closure-per-popup sink on top-level ScreenGui children
+            PS.conns[#PS.conns + 1] = sg.ChildAdded:Connect(function(ch)
+                if not PS.active then return end
+                if ch:IsA("GuiObject") then
+                    pcall(function() ch.Visible = false end)
+                    queuePopupDestroy(ch)
+                elseif ch:IsA("Sound") then
+                    pcall(function() ch.Volume = 0; if ch.IsPlaying then ch:Stop() end end)
+                    queuePopupDestroy(ch)
+                end
+            end)
+
+            PS.conns[#PS.conns + 1] = sg:GetPropertyChangedSignal("Enabled"):Connect(function()
+                if PS.active and sg.Enabled then
+                    pcall(function() sg.Enabled = false end)
+                end
+            end)
+        end
+    end
+
+    -- Fallback when a game places Strength/Durability/Agility popups inside a Frame/Folder of a shared main HUD ScreenGui
+    local function suppressPopupContainer(container)
+        if not (container and container.Parent) then return end
+        if isOwnHubObj(container) or PS.suppressedContainers[container] then return end
+        if isProtectedGuiName(container.Name) or hasProtectedGuiDescendant(container) then return end
+
+        PS.suppressedContainers[container] = true
+        PS.summary = "Container: " .. container.Name
+        if container:IsA("GuiObject") then
+            if PS.disabledContainers[container] == nil then
+                PS.disabledContainers[container] = container.Visible
+            end
+            if container.Visible then
+                pcall(function() container.Visible = false end)
+            end
+            PS.conns[#PS.conns + 1] = container:GetPropertyChangedSignal("Visible"):Connect(function()
+                if PS.active and container.Visible then
+                    pcall(function() container.Visible = false end)
+                end
+            end)
+        end
+        for _, ch in ipairs(container:GetChildren()) do
+            if ch:IsA("GuiObject") and looksLikeStatPopup(ch) then
+                pcall(function() ch.Visible = false end)
+                queuePopupDestroy(ch)
+            end
+        end
+        PS.conns[#PS.conns + 1] = container.ChildAdded:Connect(function(ch)
+            if not PS.active then return end
+            if ch:IsA("GuiObject") then
+                pcall(function() ch.Visible = false end)
+                queuePopupDestroy(ch)
+            end
+        end)
+    end
+
+    local function recordBurstAndPromote(container, sg)
+        if not container then return end
+        if sg and PS.suppressedHosts[sg] then return end
+        if PS.suppressedContainers[container] then return end
+
+        local now = M.clock()
+        local tr = PS.burstByContainer[container]
+        if not tr or (now - tr.t0) > BURST_WINDOW_SEC then
+            PS.burstByContainer[container] = {t0 = now, count = 1}
+        else
+            tr.count += 1
+            if tr.count >= BURST_THRESHOLD then
+                PS.burstByContainer[container] = nil
+                if container:IsA("ScreenGui") then
+                    suppressPopupScreenGui(container)
+                elseif sg and container == sg then
+                    suppressPopupScreenGui(sg)
+                else
+                    suppressPopupContainer(container)
+                end
+            end
+        end
+    end
+
+    local function watchScreenGuiForPopups(sg)
+        if not (sg and sg.Parent and sg:IsA("ScreenGui")) then return end
+        if isOwnHubObj(sg) or isProtectedGuiName(sg.Name) or PS.watchedGuis[sg] then return end
+        PS.watchedGuis[sg] = true
+
+        local gl = tostring(sg.Name or ""):lower()
+        if POPUP_GUI_EXACT[gl] or hasAnySub(gl, POPUP_GUI_KW) then
+            suppressPopupScreenGui(sg)
             return
         end
 
+        PS.conns[#PS.conns + 1] = sg.ChildAdded:Connect(function(ch)
+            if not PS.active or PS.suppressedHosts[sg] then return end
+            if ch:IsA("GuiObject") and looksLikeStatPopup(ch) then
+                pcall(function() ch.Visible = false end)
+                queuePopupDestroy(ch)
+                recordBurstAndPromote(sg, sg)
+            end
+        end)
+    end
+
+    -- Layer 1: Flip native in-game "Show Popups" / "Mostrar ventanas emergentes" setting OFF
+    local function syncNativePopupSettingOff()
+        local now = M.clock()
+        if PS.nativeSynced and (now - PS.lastNativeSync) < 10.0 then return end
+        PS.lastNativeSync = now
+
+        local roots = {Player}
+        for _, fn in ipairs({"Settings", "settings", "Data", "PlayerData", "Config", "Values"}) do
+            local f = Player:FindFirstChild(fn)
+            if f then roots[#roots + 1] = f end
+        end
+        for _, root in ipairs(roots) do
+            for _, ch in ipairs(root:GetChildren()) do
+                if ch:IsA("BoolValue") and NATIVE_BOOL_NAMES[ch.Name:lower()] and ch.Value == true then
+                    if PS.origBools[ch] == nil then PS.origBools[ch] = ch.Value end
+                    pcall(function() ch.Value = false end)
+                    PS.nativeSynced = true
+                end
+            end
+            for ak, av in pairs(root:GetAttributes()) do
+                if av == true and NATIVE_BOOL_NAMES[tostring(ak):lower()] then
+                    local keyId = tostring(root) .. "::" .. tostring(ak)
+                    if PS.origAttrs[keyId] == nil then
+                        PS.origAttrs[keyId] = {inst = root, key = ak, val = av}
+                    end
+                    pcall(function() root:SetAttribute(ak, false) end)
+                    PS.nativeSynced = true
+                end
+            end
+        end
+
+        local pGui = Player:FindFirstChildOfClass("PlayerGui")
+        if not pGui then return end
+        for _, gui in ipairs(pGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and not isOwnHubObj(gui) then
+                local gn = gui.Name:lower()
+                if gn ~= "chat" and gn ~= "bubblechat" and gn ~= "touchgui" and gn ~= "freecam" then
+                    for _, desc in ipairs(gui:GetDescendants()) do
+                        if desc:IsA("TextLabel") and desc.Text and #desc.Text > 0 and #desc.Text <= 52 then
+                            local tl = cleanGuiStr(desc.Text)
+                            if hasAnySub(tl, NATIVE_TOGGLE_LABELS) then
+                                local row = desc.Parent
+                                if row then
+                                    for _, sib in ipairs(row:GetDescendants()) do
+                                        if sib:IsA("GuiButton") then
+                                            local bt = sib:IsA("TextButton") and cleanGuiStr(sib.Text) or ""
+                                            if bt == "" then
+                                                local subLbl = sib:FindFirstChildWhichIsA("TextLabel")
+                                                if subLbl then bt = cleanGuiStr(subLbl.Text) end
+                                            end
+                                            if bt == "on" or bt == "en" or bt == "yes" or bt == "si" or bt == "sí" or bt == "enabled" then
+                                                if RewardEngine and RewardEngine.fireGuiButton and RewardEngine.fireGuiButton(sib) then
+                                                    PS.flippedNativeBtn = sib
+                                                    PS.nativeSynced = true
+                                                    PS.summary = "Native Setting OFF"
+                                                    return
+                                                end
+                                            elseif bt == "off" or bt == "no" or bt == "disabled" then
+                                                PS.nativeSynced = true
+                                                return
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Layer 2: Mute popup-only RemoteEvent OnClientEvent connections (zero callback cost per rep)
+    local function mutePopupRemoteListeners()
+        if type(getconnections) ~= "function" then return end
+        local function scanContainer(root)
+            if not root then return end
+            for _, inst in ipairs(root:GetDescendants()) do
+                if inst:IsA("RemoteEvent") then
+                    local nl = inst.Name:lower()
+                    if hasAnySub(nl, POPUP_REMOTE_ALLOW) and not hasAnySub(nl, POPUP_REMOTE_BLOCK) then
+                        local ok, conns = pcall(getconnections, inst.OnClientEvent)
+                        if ok and type(conns) == "table" then
+                            for _, conn in ipairs(conns) do
+                                if conn and type(conn.Disable) == "function" then
+                                    local dup = false
+                                    for i = 1, #PS.mutedConns do
+                                        if PS.mutedConns[i] == conn then dup = true; break end
+                                    end
+                                    if not dup and pcall(conn.Disable, conn) then
+                                        PS.mutedConns[#PS.mutedConns + 1] = conn
+                                        PS.summary = "Muted Remote: " .. inst.Name
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        scanContainer(ReplicatedStorage)
+        scanContainer(Player)
+    end
+
+    local function hidePopupTemplates()
+        for _, inst in ipairs(ReplicatedStorage:GetDescendants()) do
+            if inst:IsA("GuiObject") and POPUP_TEMPLATE_NAMES[inst.Name:lower()] then
+                if PS.hiddenTemplates[inst] == nil then
+                    PS.hiddenTemplates[inst] = inst.Visible
+                end
+                if inst.Visible then
+                    pcall(function() inst.Visible = false end)
+                end
+            end
+        end
+    end
+
+    local function disconnectShieldConns()
+        for i = #PS.conns, 1, -1 do
+            pcall(function() PS.conns[i]:Disconnect() end)
+            PS.conns[i] = nil
+        end
+        PS.watchedGuis = setmetatable({}, {__mode = "k"})
+        PS.suppressedHosts = setmetatable({}, {__mode = "k"})
+        PS.suppressedContainers = setmetatable({}, {__mode = "k"})
+        PS.burstByContainer = setmetatable({}, {__mode = "k"})
+    end
+
+    local function restoreShieldState()
+        for i = #PS.mutedConns, 1, -1 do
+            local conn = PS.mutedConns[i]
+            PS.mutedConns[i] = nil
+            if conn and type(conn.Enable) == "function" then
+                pcall(conn.Enable, conn)
+            end
+        end
+        for scr, origDis in pairs(PS.disabledScripts) do
+            PS.disabledScripts[scr] = nil
+            if scr and scr.Parent then pcall(function() scr.Disabled = origDis end) end
+        end
+        for sg, origEn in pairs(PS.disabledGuis) do
+            PS.disabledGuis[sg] = nil
+            if sg and sg.Parent then pcall(function() sg.Enabled = origEn end) end
+        end
+        for cont, origVis in pairs(PS.disabledContainers) do
+            PS.disabledContainers[cont] = nil
+            if cont and cont.Parent then pcall(function() cont.Visible = origVis end) end
+        end
+        for tpl, origVis in pairs(PS.hiddenTemplates) do
+            PS.hiddenTemplates[tpl] = nil
+            if tpl and tpl.Parent then pcall(function() tpl.Visible = origVis end) end
+        end
+        for bv, origVal in pairs(PS.origBools) do
+            PS.origBools[bv] = nil
+            if bv and bv.Parent then pcall(function() bv.Value = origVal end) end
+        end
+        for k, rec in pairs(PS.origAttrs) do
+            PS.origAttrs[k] = nil
+            if rec and rec.inst and rec.inst.Parent then pcall(function() rec.inst:SetAttribute(rec.key, rec.val) end) end
+        end
+        if PS.flippedNativeBtn and PS.flippedNativeBtn.Parent and RewardEngine and RewardEngine.fireGuiButton then
+            local btn = PS.flippedNativeBtn
+            local bt = btn:IsA("TextButton") and cleanGuiStr(btn.Text) or ""
+            if bt == "" then
+                local subLbl = btn:FindFirstChildWhichIsA("TextLabel")
+                if subLbl then bt = cleanGuiStr(subLbl.Text) end
+            end
+            if bt == "off" or bt == "no" or bt == "disabled" then
+                pcall(RewardEngine.fireGuiButton, btn)
+            end
+        end
+        PS.flippedNativeBtn = nil
+        PS.nativeSynced = false
+        PS.q = {}; PS.qHead = 1; PS.qTail = 0
+        PS.summary = "Idle"
+    end
+
+    function Perf.isSuppressedPopupHost(sg)
+        return sg ~= nil and PS.suppressedHosts[sg] == true
+    end
+
+    function Perf.drainRepPopupQueue()
+        local head, tail = PS.qHead, PS.qTail
+        if head > tail then return end
+        local t0 = M.clock()
+        while head <= tail do
+            local obj = PS.q[head]
+            PS.q[head] = nil
+            head += 1
+            if obj and obj.Parent then
+                pcall(obj.Destroy, obj)
+            end
+            if (head % 12 == 0) and (M.clock() - t0 >= DESTROY_BUDGET_SEC) then
+                break
+            end
+        end
+        if head > tail then
+            PS.qHead = 1; PS.qTail = 0
+        else
+            PS.qHead = head
+        end
+    end
+
+    function Perf.setRepPopupShield(on)
+        local want = (on == true) and Config.Active
+        if want then
+            if PS.active then return end
+            PS.active = true
+            disconnectShieldConns()
+
+            local pGui = Player:FindFirstChildOfClass("PlayerGui")
+            if pGui then
+                for _, child in ipairs(pGui:GetChildren()) do
+                    if child:IsA("ScreenGui") then
+                        watchScreenGuiForPopups(child)
+                    end
+                end
+                PS.conns[#PS.conns + 1] = pGui.ChildAdded:Connect(function(child)
+                    if PS.active and child:IsA("ScreenGui") then
+                        watchScreenGuiForPopups(child)
+                    end
+                end)
+            end
+
+            syncNativePopupSettingOff()
+            mutePopupRemoteListeners()
+            hidePopupTemplates()
+        else
+            if not PS.active and next(PS.disabledGuis) == nil and #PS.mutedConns == 0 and PS.flippedNativeBtn == nil then
+                return
+            end
+            PS.active = false
+            disconnectShieldConns()
+            restoreShieldState()
+        end
+    end
+
+    function Perf.syncRepPopupShield()
+        local anyRep = Config.Active and (Config.FastRep or Config.AIFastRep or Config.AutoRep)
+        Perf.setRepPopupShield(Config.Active and Config.RepAntiLag and anyRep)
+    end
+
+    function Perf.handleRepAntiLagDesc(d)
+        if not (Config.Active and Config.RepAntiLag and Runtime.RepGateOpen and (Config.FastRep or Config.AIFastRep or Config.AutoRep)) then return end
+        if not (d and d.Parent) then return end
+        if isOwnHubObj(d) then return end
+
         if d:IsA("Sound") then
             local now = M.clock()
-            if (now - lastRepSoundAllowT) < 0.22 then
+            if (now - PS.lastSoundAllowT) < 0.35 then
                 pcall(function() d.Volume = 0; if d.IsPlaying then d:Stop() end end)
             else
-                lastRepSoundAllowT = now
+                PS.lastSoundAllowT = now
             end
             return
         end
@@ -8704,52 +9220,55 @@ do
                 return
             end
             local sg = d:FindFirstAncestorOfClass("ScreenGui")
+            if sg and PS.suppressedHosts[sg] then return end
+            local par = d.Parent
+            if par and PS.suppressedContainers[par] then return end
             if hasProtectedGuiAncestor(d, sg) then return end
+
             local gl = sg and tostring(sg.Name or ""):lower() or ""
-
-            local isPopup = false
-            for _, pKw in ipairs(POPUP_GUI_KW) do
-                if gl:find(pKw, 1, true) then isPopup = true; break end
+            if sg and (POPUP_GUI_EXACT[gl] or hasAnySub(gl, POPUP_GUI_KW)) then
+                suppressPopupScreenGui(sg)
+                return
             end
-            if not isPopup and d:IsA("TextLabel") then
-                local nl = tostring(d.Name or ""):lower()
-                local okT, txtRaw = pcall(function() return d.Text end)
-                local txt = (okT and type(txtRaw) == "string") and txtRaw or ""
-                if nl:find("popup") or nl:find("gain") or nl:find("float") or txt:match("^%s*%+[%d%.,]") then
-                    isPopup = true
+
+            if d:IsA("BillboardGui") then
+                local bnl = tostring(d.Name or ""):lower()
+                if hasAnySub(bnl, STAT_POPUP_KW) then
+                    pcall(function() d.Enabled = false end)
+                    queuePopupDestroy(d)
                 end
+                return
             end
 
-            if isPopup then
-                local now = M.clock()
-                if (now - lastPopupAllowT) < 0.14 then
-                    task.defer(function()
-                        if d and d.Parent and Config.RepAntiLag and Runtime.RepGateOpen then
-                            if d:IsA("BillboardGui") then pcall(function() d.Enabled = false end)
-                            elseif d:IsA("GuiObject") then pcall(function() d.Visible = false end) end
-                        end
-                    end)
-                else
-                    lastPopupAllowT = now
+            if looksLikeStatPopup(d) then
+                local target = d
+                if par and par:IsA("GuiObject") and par ~= sg and not isProtectedGuiName(par.Name) and looksLikeStatPopup(par) then
+                    target = par
+                end
+                pcall(function() target.Visible = false end)
+                queuePopupDestroy(target)
+                local hostCont = target.Parent
+                if hostCont and (hostCont == sg or hostCont:IsA("GuiObject") or hostCont:IsA("Folder")) then
+                    recordBurstAndPromote(hostCont, sg)
                 end
             end
         end
     end
 
     function Perf.sweepRepPopups()
+        Perf.syncRepPopupShield()
         local pGui = Player:FindFirstChildOfClass("PlayerGui")
         if not pGui then return end
         for _, sg in ipairs(pGui:GetChildren()) do
-            if sg:IsA("ScreenGui") and sg ~= Runtime.UI.GUI and sg ~= Runtime.UI.ToggleGui and not isProtectedGuiName(sg.Name) then
+            if sg:IsA("ScreenGui") and not isOwnHubObj(sg) and not isProtectedGuiName(sg.Name) then
                 local gl = tostring(sg.Name or ""):lower()
-                local isPopupGui = false
-                for _, pKw in ipairs(POPUP_GUI_KW) do
-                    if gl:find(pKw, 1, true) then isPopupGui = true; break end
-                end
-                if isPopupGui then
+                if POPUP_GUI_EXACT[gl] or hasAnySub(gl, POPUP_GUI_KW) then
+                    suppressPopupScreenGui(sg)
+                else
                     for _, ch in ipairs(sg:GetChildren()) do
-                        if ch:IsA("GuiObject") and ch.Visible and not hasProtectedGuiDescendant(ch) then
+                        if ch:IsA("GuiObject") and ch.Visible and looksLikeStatPopup(ch) and not hasProtectedGuiDescendant(ch) then
                             pcall(function() ch.Visible = false end)
+                            queuePopupDestroy(ch)
                         end
                     end
                 end
@@ -9797,6 +10316,7 @@ do
             Core.forceKillAllRepWorkers()
             local anyRep = Config.AutoRep or Config.AIFastRep or Config.FastRep
             Runtime.RepGateOpen = anyRep
+            Perf.syncRepPopupShield()
             if anyRep then
                 if Config.RepAntiLag then task.defer(Perf.sweepRepPopups) end
                 local rem = Remotes.getPrimaryMuscle()
@@ -9915,8 +10435,9 @@ do
         end)
 
         createToggle(P, "Strength", "Anti-Lag Popups & VFX Shield", "RepAntiLag", nil, function(on)
+            Perf.syncRepPopupShield()
             if on then task.defer(Perf.sweepRepPopups) end
-        end, "throttles +Strength popup flood & audio lag during fast reps")
+        end, "eliminates Strength, Durability/Endurance & Agility popup lag at extreme rep speeds")
 
         local function applyTypedRepSpeed(rawText, isFinalCommit)
             local parsed = Core.parseSmartInput(rawText)
@@ -10457,11 +10978,15 @@ local function startLoops()
         Core.track(rootGui.DescendantAdded:Connect(function(d)
             if myGen ~= Runtime.Gen or not Config.Active then return end
             local needHide = Config.HideNameEnabled
-            local needAntiLag = Config.RepAntiLag and Runtime.RepGateOpen and (Config.FastRep or Config.AIFastRep)
+            local needAntiLag = Config.RepAntiLag and Runtime.RepGateOpen and (Config.FastRep or Config.AIFastRep or Config.AutoRep)
             local needRew = isPlayerGui and (Config.AutoCollectRewards or Config.AutoSpinReward)
             if not (needHide or needAntiLag or needRew) then return end
+            if needAntiLag then
+                local sgFast = d:FindFirstAncestorOfClass("ScreenGui")
+                if sgFast and Perf.isSuppressedPopupHost(sgFast) then return end
+                Perf.handleRepAntiLagDesc(d)
+            end
             if needHide and d:IsA("TextLabel") then Visuals.bindHideName(d) end
-            if needAntiLag then Perf.handleRepAntiLagDesc(d) end
             if needRew and (d:IsA("ScreenGui") or d:IsA("Frame")) then
                 if not ((Runtime.UI.GUI and d:IsDescendantOf(Runtime.UI.GUI)) or (Runtime.UI.ToggleGui and d:IsDescendantOf(Runtime.UI.ToggleGui))) then
                     local sg = d:IsA("ScreenGui") and d or d:FindFirstAncestorOfClass("ScreenGui")
@@ -10674,12 +11199,13 @@ local function startLoops()
                 activeToken = Runtime.SessionTokens.rep
                 Core.forceKillAllRepWorkers()
                 Runtime.RepGateOpen = (Config.FastRep or Config.AIFastRep or Config.AutoRep)
+                Perf.syncRepPopupShield()
                 carryRemainder = 0; autoRepAcc = 0
                 calibCheckT = M.clock()
                 calibPrevSum = Telemetry.getStatNum("Strength") + Telemetry.getStatNum("Durability")
             end
             if not (Config.FastRep or Config.AIFastRep or Config.AutoRep) then
-                Runtime.RepGateOpen = false; carryRemainder = 0; return
+                Runtime.RepGateOpen = false; carryRemainder = 0; Perf.syncRepPopupShield(); return
             end
             Runtime.RepGateOpen = true
 
@@ -11358,6 +11884,7 @@ local function startLoops()
                 if Config.FastRep or Config.AIFastRep or Config.AutoRep or Runtime.RepGateOpen or activeToken ~= Runtime.SessionTokens.rep then
                     stepRepEngine(dt)
                 end
+                Perf.drainRepPopupQueue()
                 if Config.AutoRebirth or Telemetry.rebCooldownLeft > 0 then
                     stepRebirthEngine()
                 end
@@ -11483,6 +12010,7 @@ local function resetAllFeaturesToNormal()
     pcall(Perf.setRemoveFog, false)
     pcall(Perf.setPingBoost, false)
     pcall(Perf.setAIPerfMode, false)
+    pcall(Perf.setRepPopupShield, false)
     Perf.frameProtectActive = false
     pcall(Visuals.removeKorblox, Player.Character)
     pcall(function() if Player.Character then Visuals.removeHeadless(Player.Character) end end)
