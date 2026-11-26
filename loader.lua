@@ -4047,6 +4047,7 @@ local BossEngine = {
     tweenElapsed = 0,
     tweenDur = 0,
     tweenTargetModel = nil,
+    hasLandedOnHead = false,
     bossCfgLoaded = false,
     bossCfgCheckedAt = -100,
     bossCfgMap = {},
@@ -4463,7 +4464,8 @@ do
                     end
                     if isActuallyVisible or isBossDmgHb or dl == "humanoidrootpart" or dl == "head" or dl == "uppertorso" or dl == "torso" then
                         local p = d.Position
-                        local hs = d.Size * 0.5
+                        local hbOrig = BossEngine.hitboxBackup[d]
+                        local hs = ((hbOrig and hbOrig.Size) or d.Size) * 0.5
                         sumX += p.X; sumY += p.Y; sumZ += p.Z; visCount += 1
                         if p.Y - hs.Y < minY then minY = p.Y - hs.Y end
                         if p.Y + hs.Y > maxY then maxY = p.Y + hs.Y end
@@ -5711,7 +5713,7 @@ do
                 local bObj = focusBoss or Combat.bossTargets[1]
                 local bInReach = false
                 if bObj and bObj.model and bObj.model.Parent then
-                    local reachLim = focusBoss and M.max(72, (bObj.bodyStats and bObj.bodyStats.maxSpan or 30) + 36) or 35
+                    local reachLim = focusBoss and M.max(110, (bObj.bodyStats and bObj.bodyStats.maxSpan or 30) + 70) or 35
                     local dmgHb = bObj.hitParts and bObj.hitParts[1]
                     if dmgHb and dmgHb.Parent and (dmgHb.Position - root.Position).Magnitude <= reachLim then
                         bInReach = true
@@ -6130,9 +6132,14 @@ do
         if not explicitName and BossEngine.staticArenaParts[d] then return false, 0, false, nil end
         local floorY = bossFloorY or (bPos.Y - 6)
 
+        local isBeachBoss = (isEventBoss ~= true)
+
         if not d:IsA("BasePart") then
             if d:IsA("Explosion") and (d.Position - bPos).Magnitude <= 190 then
-                local r = M.clamp((tonumber(d.BlastRadius) or 34) + 22, 46, 116)
+                local rawR = tonumber(d.BlastRadius) or 34
+                -- On Beach boss ignore small red-skill explosions; only dodge full yellow ultimate blasts
+                if isBeachBoss and rawR < 45 then return false, 0, false, nil end
+                local r = M.clamp(rawR + 22, 46, 116)
                 return true, r, true, {center = d.Position, isUltimate = (r >= 52), isBeam = false, explicitName = true}
             end
             return false, 0, false, nil
@@ -6147,7 +6154,7 @@ do
         local wx, wy, wz = getPartWorldBox(d)
         local maxHoriz = M.max(wx, wz)
         local minHoriz = M.min(wx, wz)
-        if maxHoriz < 10.0 or wy > 16.0 then return false, 0, false, nil end
+        if maxHoriz < 4.0 or wy > 16.0 then return false, 0, false, nil end
         local sz = maxHoriz * 0.5
 
         if not explicitName then
@@ -6173,6 +6180,19 @@ do
             return false, 0, false, nil
         end
 
+        local h, s, v = col:ToHSV()
+        local isRedOrPink = (h <= 0.075 or h >= 0.82) and s >= 0.34 and v >= 0.38
+        local isBrightYellowOrange = (h > 0.075 and h <= 0.20) and s >= 0.34 and v >= 0.42
+        local isFlatGround = (wy <= 14.0) and ((maxHoriz / M.max(wy, 0.08)) >= 1.5)
+        local isBeamShape = (maxHoriz >= 16.0) and (minHoriz <= 16.0) and (wy <= 14.0)
+        local isCircleLike = (d:IsA("Part") and (d.Shape == Enum.PartType.Cylinder or d.Shape == Enum.PartType.Ball))
+            or (M.abs(wx - wz) <= maxHoriz * 0.24 and maxHoriz >= (isBrightYellowOrange and 6.0 or 18.0))
+
+        -- Non-yellow parts smaller than 10 studs are ignored; small growing inner yellow ultimate discs (>=4 studs) are kept for accurate % tracking!
+        if maxHoriz < 10.0 and not (isBrightYellowOrange and isFlatGround and isCircleLike) then
+            return false, 0, false, nil
+        end
+
         local inBoss = (bossModel ~= nil and d:IsDescendantOf(bossModel))
         local spT = BossEngine.spawnedPartTimes[d]
         local isDynamicSpawn = (spT ~= nil) and (spT >= (BossEngine.streamSettleUntil or 0))
@@ -6183,15 +6203,15 @@ do
             return false, 0, false, nil
         end
 
-        local isFlatGround = (wy <= 14.0) and ((maxHoriz / M.max(wy, 0.08)) >= 1.5)
-        local isBeamShape = (maxHoriz >= 16.0) and (minHoriz <= 16.0) and (wy <= 14.0)
-        local isCircleLike = (d:IsA("Part") and (d.Shape == Enum.PartType.Cylinder or d.Shape == Enum.PartType.Ball))
-            or (M.abs(wx - wz) <= maxHoriz * 0.18 and maxHoriz >= 20.0)
-
-        -- Explicit AOE/Telegraph names (always accepted!)
+        -- Explicit AOE/Telegraph names
         if explicitName then
-            local isFast = (dLow:find("explosion", 1, true) or dLow:find("laser", 1, true) or dLow:find("beam", 1, true) or dLow:find("slam", 1, true) or dLow:find("cone", 1, true)) ~= nil
-            local isUlt = (hasKw(dLow, ULT_ATK_KW) or isCircleLike or sz >= 28)
+            local isYellowCirc = isCircleLike and isBrightYellowOrange
+            local isUlt = (hasKw(dLow, ULT_ATK_KW) or isYellowCirc or (isCircleLike and sz >= 24))
+            -- On Beach Boss: ignore the 2 frontal red skills; ONLY track/dodge the yellow ultimate AOE!
+            if isBeachBoss and not isUlt then
+                return false, 0, false, nil
+            end
+            local isFast = (not isUlt) and (dLow:find("explosion", 1, true) or dLow:find("laser", 1, true) or dLow:find("beam", 1, true) or dLow:find("slam", 1, true) or dLow:find("cone", 1, true)) ~= nil
             local beamDir = nil
             if isBeamShape or dLow:find("laser", 1, true) or dLow:find("beam", 1, true) then
                 local lv = (wz >= wx) and d.CFrame.LookVector or d.CFrame.RightVector
@@ -6200,18 +6220,30 @@ do
             end
             return true, M.clamp(sz + 24, 44, 124), isFast, {
                 center = dPos, isUltimate = isUlt, isBeam = (beamDir ~= nil), beamDir = beamDir,
-                part = d, isCircle = isCircleLike, explicitName = true,
+                part = d, isCircle = isCircleLike, isYellowCircle = isYellowCirc, explicitName = true,
             }
         end
 
         -- Color-based detection ONLY for genuinely dynamic telegraphs outside static arena scenery.
-        -- On Alien/Event Boss (grey/purple arena), pre-existing translucent red/yellow telegraphs are also accepted if outside static scenery.
-        local h, s, v = col:ToHSV()
-        local isRedOrPink = (h <= 0.08 or h >= 0.82) and s >= 0.34 and v >= 0.38
-        local isBrightYellowOrange = (h > 0.08 and h <= 0.19) and s >= 0.42 and v >= 0.45
         local isTranslucent = (d.Transparency >= 0.12 and d.Transparency < 0.96) or hasSurfaceVis
         local inStaticScenery = isInsideStaticArenaScenery(d)
 
+        -- On Beach Boss: ONLY detect yellow circular ultimate AOE (ignore the 2 red frontal skills!)
+        if isBeachBoss then
+            local allowBeachYellow = (isDynamicSpawn or wasPooledHidden or (isFlatGround and isCircleLike and isTranslucent and maxHoriz >= 16.0))
+                and not inStaticScenery and isFlatGround and isCircleLike and isBrightYellowOrange
+            if not allowBeachYellow then
+                return false, 0, false, nil
+            end
+            -- NEVER return immediate=true for yellow ultimate: wait until >=58% charge!
+            return true, M.clamp(sz + 24, 52, 134), false, {
+                center = dPos, isUltimate = true, isBeam = false, part = d,
+                isCircle = true, isRedRect = false, isYellowCircle = true,
+                explicitName = false,
+            }
+        end
+
+        -- Event / Alien Boss: accept both red skills and yellow ultimates
         local allowDynamic = (isDynamicSpawn or wasPooledHidden) and not inStaticScenery and (isRedOrPink or isBrightYellowOrange)
         local allowEventPooled = (isEventBoss == true) and not inStaticScenery and isFlatGround and (isRedOrPink or isBrightYellowOrange) and (isTranslucent or d.Material == Enum.Material.Neon) and maxHoriz >= 16.0
 
@@ -6220,11 +6252,12 @@ do
         end
 
         if isFlatGround then
-            local isUlt = (isCircleLike and isBrightYellowOrange) or (sz >= 26)
-            return true, M.clamp(sz + 24, 44, 124), (isRedOrPink or isUlt), {
+            local isYellowCirc = isCircleLike and isBrightYellowOrange
+            local isUlt = isYellowCirc or (isCircleLike and sz >= 26)
+            return true, M.clamp(sz + 24, 44, 124), false, {
                 center = dPos, isUltimate = isUlt, isBeam = false, part = d,
                 isCircle = isCircleLike, isRedRect = (isRedOrPink and not isCircleLike),
-                isYellowCircle = (isCircleLike and isBrightYellowOrange),
+                isYellowCircle = isYellowCirc,
                 explicitName = false,
             }
         end
@@ -6232,7 +6265,7 @@ do
         if isBeamShape and (isRedOrPink or isBrightYellowOrange) then
             local lv = (wz >= wx) and d.CFrame.LookVector or d.CFrame.RightVector
             local flat = lv * Vector3.new(1, 0, 1)
-            return true, M.clamp(minHoriz * 0.5 + 24, 38, 76), true, {
+            return true, M.clamp(minHoriz * 0.5 + 24, 38, 76), false, {
                 center = dPos, isUltimate = false, isBeam = (flat.Magnitude > 0.1),
                 beamDir = (flat.Magnitude > 0.1) and flat.Unit or nil, part = d,
                 explicitName = false,
@@ -6392,6 +6425,8 @@ do
                     part.CanCollide = orig.CanCollide
                     part.Massless = orig.Massless
                     part.Transparency = orig.Transparency
+                    if orig.CanTouch ~= nil then part.CanTouch = orig.CanTouch end
+                    if orig.CanQuery ~= nil then part.CanQuery = orig.CanQuery end
                 end
             end)
             BossEngine.hitboxBackup[part] = nil
@@ -6409,26 +6444,54 @@ do
         local bStats = target.bodyStats
         local bodySpan = (bStats and bStats.valid and bStats.maxSpan > 0) and bStats.maxSpan or 22
         local bodyHeight = (bStats and bStats.valid and bStats.height > 0) and bStats.height or 22
-        local spanXZ = M.clamp(M.max(bodySpan * 1.45, 42), 42, 105)
-        local spanY  = M.clamp(M.max(bodyHeight + 28, 48), 48, 120)
+        -- Large expanded hitbox enveloping the far-behind-head hover zone so every punch connects easily
+        local spanXZ = M.clamp(M.max(bodySpan * 2.6, 104), 104, 170)
+        local spanY  = M.clamp(M.max(bodyHeight + 56, 86), 86, 150)
         local targetSize = Vector3.new(spanXZ, spanY, spanXZ)
 
-        local hb = model:FindFirstChild("BossDamageHitbox", true) or model:FindFirstChild("Hitbox", true)
-        if not (hb and hb:IsA("BasePart") and hb.Parent) then
-            hb = target.part
+        local hbTargets, seenHb = {}, {}
+        local function addHb(p, requireInvisible)
+            if not (p and p:IsA("BasePart") and p.Parent) or seenHb[p] then return end
+            local origRec = BossEngine.hitboxBackup[p]
+            local effTrans = (origRec and origRec.Transparency) or p.Transparency
+            if requireInvisible and effTrans < 0.85 then return end
+            seenHb[p] = true
+            hbTargets[#hbTargets + 1] = p
         end
-        if hb and hb:IsA("BasePart") and hb.Parent then
+
+        addHb(model:FindFirstChild("BossDamageHitbox", true), false)
+        addHb(model:FindFirstChild("Hitbox", true), false)
+        addHb(model:FindFirstChild("HumanoidRootPart", true), true)
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("BasePart") then
+                local nl = d.Name:lower()
+                if nl == "bossdamagehitbox" or nl:find("hitbox", 1, true) then
+                    addHb(d, false)
+                elseif d:FindFirstChildOfClass("TouchTransmitter") ~= nil then
+                    addHb(d, true)
+                end
+            end
+        end
+        if #hbTargets == 0 and target.part then
+            addHb(target.part, false)
+        end
+
+        for _, hb in ipairs(hbTargets) do
             if BossEngine.hitboxBackup[hb] == nil then
                 BossEngine.hitboxBackup[hb] = {
                     Size = hb.Size,
                     CanCollide = hb.CanCollide,
                     Massless = hb.Massless,
                     Transparency = hb.Transparency,
+                    CanTouch = hb.CanTouch,
+                    CanQuery = hb.CanQuery,
                 }
             end
             pcall(function()
                 hb.CanCollide = false
                 hb.Massless = true
+                hb.CanTouch = true
+                hb.CanQuery = true
                 hb.Transparency = 1
                 if hb.Size ~= targetSize then
                     hb.Size = targetSize
@@ -6485,6 +6548,7 @@ do
         if not bossObj or not bossObj.part or not bossObj.part.Parent then return false, 36, nil end
 
         local bPos = bossObj.part.Position
+        local isBeachBoss = (bossObj.isEvent ~= true)
         local bossFloorY = groundFloorY or BossEngine.arenaFloorY or (bPos.Y - 6)
         local dangerRadius, telegraphNow, immediateNow = 0, false, false
         local inFirstHalfCharge = false
@@ -6553,7 +6617,7 @@ do
                         end
                     end
                     local seqTotal = BossEngine.seqTotal or M.clamp(rem, 0.25, 8.0)
-                    local isUltByDur = isUltAtk or (seqTotal >= 2.2)
+                    local isUltByDur = isUltAtk or (seqTotal >= 2.0)
                     local isTelegraphedSkill = isSkillAtk or isUltByDur or (not isBasicOrIdle and seqTotal >= 0.35)
                     if isTelegraphedSkill and rem >= -0.25 and rem <= 8.0 then
                         local seqStart = BossEngine.seqStart or srvNow
@@ -6566,30 +6630,38 @@ do
                         chargeSig = "imp_" .. tostring(atkSeq or M.floor(atkImpact * 10))
                         BossEngine.lastAttackCF = (typeof(atkCF) == "CFrame") and atkCF or CFrame.new(bPos, bPos + (bossObj.part.CFrame.LookVector * Vector3.new(1, 0, 1)))
                         BossEngine.lastAttackRad = isUltByDur and M.max(baseAtkRad, 78) or M.max(baseAtkRad, 62)
-                        if pct < 42 and rem > 0.85 then
-                            inFirstHalfCharge = true
-                        else
-                            telegraphNow = true
-                            dangerRadius = M.max(dangerRadius, BossEngine.lastAttackRad)
-                            bestMeta = {center = hazardCenter, isUltimate = isUltByDur, isBeam = kindLow:find("beam") ~= nil or kindLow:find("laser") ~= nil}
-                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + M.clamp(rem + 0.35, 0.35, 1.65))
+                        -- Beach boss: ONLY dodge the yellow ultimate AOE (ignore the 2 red frontal skills), and wait until >=58% charged!
+                        local shouldDodgeThis = (not isBeachBoss) or isUltByDur
+                        if shouldDodgeThis then
+                            local dodgePctGate = isUltByDur and 58 or 55
+                            local dodgeRemGate = isUltByDur and 0.85 or 0.55
+                            if pct < dodgePctGate and rem > dodgeRemGate then
+                                inFirstHalfCharge = true
+                            else
+                                telegraphNow = true
+                                dangerRadius = M.max(dangerRadius, BossEngine.lastAttackRad)
+                                bestMeta = {center = hazardCenter, isUltimate = isUltByDur, isBeam = kindLow:find("beam") ~= nil or kindLow:find("laser") ~= nil}
+                                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + M.clamp(rem + 0.25, 0.25, 1.15))
+                            end
                         end
                     end
                 elseif atkSeq ~= nil then
                     if BossEngine.lastAttackSeq ~= nil and atkSeq ~= BossEngine.lastAttackSeq then
                         BossEngine.lastAttackSeq = atkSeq
-                        if isSkillAtk or isUltAtk then
+                        if (isUltAtk or (not isBeachBoss and isSkillAtk)) then
                             chargingDetected = true
                             chargeKind = isUltAtk and "Ultimate" or "Skill"
-                            chargePct = M.max(chargePct, 60)
-                            chargeRem = isUltAtk and 1.1 or 0.65
+                            chargePct = M.max(chargePct, 58)
+                            chargeRem = isUltAtk and 0.95 or 0.55
                             chargeSig = "seq_" .. tostring(atkSeq)
                             BossEngine.lastAttackCF = (typeof(atkCF) == "CFrame") and atkCF or bossObj.part.CFrame
                             BossEngine.lastAttackRad = baseAtkRad
-                            telegraphNow = true
-                            dangerRadius = M.max(dangerRadius, baseAtkRad)
-                            bestMeta = {center = hazardCenter, isUltimate = isUltAtk, isBeam = false}
-                            BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + (isUltAtk and 1.25 or 0.80))
+                            if not isBeachBoss then
+                                telegraphNow = true
+                                dangerRadius = M.max(dangerRadius, baseAtkRad)
+                                bestMeta = {center = hazardCenter, isUltimate = isUltAtk, isBeam = false}
+                                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + (isUltAtk and 0.95 or 0.65))
+                            end
                         end
                     elseif BossEngine.lastAttackSeq == nil then
                         BossEngine.lastAttackSeq = atkSeq
@@ -6601,21 +6673,27 @@ do
                     chargingDetected = true
                     if isUltAtk then chargeKind = "Ultimate" end
                     chargePct = M.max(chargePct, pct)
-                    if pct < 50 then
-                        inFirstHalfCharge = true
-                    else
-                        telegraphNow = true; immediateNow = true
-                        dangerRadius = M.max(dangerRadius, isUltAtk and 62 or 40)
-                        bestMeta = bestMeta or {center = hazardCenter, isUltimate = isUltAtk, isBeam = false}
+                    if (not isBeachBoss) or isUltAtk then
+                        if pct < 58 then
+                            inFirstHalfCharge = true
+                        else
+                            telegraphNow = true; immediateNow = true
+                            dangerRadius = M.max(dangerRadius, isUltAtk and 62 or 40)
+                            bestMeta = bestMeta or {center = hazardCenter, isUltimate = isUltAtk, isBeam = false}
+                        end
                     end
                 end
 
                 for ak, av in pairs(bossObj.model:GetAttributes()) do
                     if isActiveDangerAttr(ak, av) and not inFirstHalfCharge then
                         local aUlt = hasKw(tostring(ak):lower() .. " " .. tostring(av):lower(), ULT_ATK_KW)
-                        telegraphNow = true; immediateNow = true
-                        dangerRadius = M.max(dangerRadius, aUlt and 62 or 38)
-                        bestMeta = bestMeta or {center = hazardCenter, isUltimate = aUlt, isBeam = false}
+                        if (not isBeachBoss) or aUlt then
+                            if not isBeachBoss then
+                                telegraphNow = true; immediateNow = true
+                                dangerRadius = M.max(dangerRadius, aUlt and 62 or 38)
+                                bestMeta = bestMeta or {center = hazardCenter, isUltimate = aUlt, isBeam = false}
+                            end
+                        end
                     end
                 end
 
@@ -6624,26 +6702,30 @@ do
                     if nv and nv.Parent and tonumber(nv.Value) and nv.Value > 0 then
                         local ratio = (nv.Value <= 1.05) and nv.Value or (nv.Value / 100)
                         local pct = M.clamp(ratio * 100, 0, 100)
+                        local nUlt = nv.Name:lower():find("ult") ~= nil
                         chargingDetected = true
-                        if nv.Name:lower():find("ult") then chargeKind = "Ultimate" end
+                        if nUlt then chargeKind = "Ultimate" end
                         chargePct = M.max(chargePct, pct)
-                        if pct < 50 then inFirstHalfCharge = true
-                        else
-                            telegraphNow = true; immediateNow = true
-                            dangerRadius = M.max(dangerRadius, baseAtkRad)
-                            bestMeta = bestMeta or {center = hazardCenter, isUltimate = (chargeKind == "Ultimate"), isBeam = false}
+                        if (not isBeachBoss) or nUlt then
+                            if pct < 58 then inFirstHalfCharge = true
+                            else
+                                telegraphNow = true; immediateNow = true
+                                dangerRadius = M.max(dangerRadius, baseAtkRad)
+                                bestMeta = bestMeta or {center = hazardCenter, isUltimate = (chargeKind == "Ultimate"), isBeam = false}
+                            end
                         end
                     end
                 end
                 for _, bv in ipairs(wEntry.bools) do
                     if bv and bv.Parent and bv.Value == true then
+                        local bUlt = bv.Name:lower():find("ult") ~= nil
                         chargingDetected = true
-                        if bv.Name:lower():find("ult") then chargeKind = "Ultimate" end
-                        if not inFirstHalfCharge then
-                            chargePct = M.max(chargePct, 55)
+                        if bUlt then chargeKind = "Ultimate" end
+                        if not isBeachBoss and not inFirstHalfCharge then
+                            chargePct = M.max(chargePct, 58)
                             telegraphNow = true; immediateNow = true
-                            dangerRadius = M.max(dangerRadius, (chargeKind == "Ultimate") and 62 or baseAtkRad)
-                            bestMeta = bestMeta or {center = hazardCenter, isUltimate = (chargeKind == "Ultimate"), isBeam = false}
+                            dangerRadius = M.max(dangerRadius, bUlt and 62 or baseAtkRad)
+                            bestMeta = bestMeta or {center = hazardCenter, isUltimate = bUlt, isBeam = false}
                         end
                     end
                 end
@@ -6656,16 +6738,19 @@ do
                             chargingDetected = true
                             if lUlt then chargeKind = "Ultimate" end
                             chargePct = M.max(chargePct, M.clamp(pctNum, 0, 100))
-                            if pctNum < 50 then inFirstHalfCharge = true
-                            else
-                                telegraphNow = true; immediateNow = true
-                                dangerRadius = M.max(dangerRadius, lUlt and 62 or 40)
-                                bestMeta = bestMeta or {center = hazardCenter, isUltimate = lUlt, isBeam = false}
+                            if (not isBeachBoss) or lUlt then
+                                if pctNum < 58 then inFirstHalfCharge = true
+                                else
+                                    telegraphNow = true; immediateNow = true
+                                    dangerRadius = M.max(dangerRadius, lUlt and 62 or 40)
+                                    bestMeta = bestMeta or {center = hazardCenter, isUltimate = lUlt, isBeam = false}
+                                end
                             end
                         elseif tl == "!" or hasKw(tl, DANGER_GUI_KW) then
                             chargingDetected = true
                             if lUlt then chargeKind = "Ultimate" end
-                            if not inFirstHalfCharge then
+                            -- Beach boss "!" is the red frontal skill warning -> stay behind head and ignore!
+                            if not isBeachBoss and not inFirstHalfCharge then
                                 chargePct = M.max(chargePct, 60)
                                 telegraphNow = true; immediateNow = true
                                 dangerRadius = M.max(dangerRadius, lUlt and 62 or 38)
@@ -6674,12 +6759,12 @@ do
                         end
                     end
                 end
-                if not inFirstHalfCharge then
+                if not inFirstHalfCharge and not isBeachBoss then
                     for _, hl in ipairs(wEntry.highlights) do
-                        local okH, radH, _, metaH = BossEngine.isDangerPart(hl, bossObj.model, bPos, bossFloorY)
+                        local okH, radH, _, metaH = BossEngine.isDangerPart(hl, bossObj.model, bPos, bossFloorY, bossObj.isEvent == true)
                         if okH then
                             chargingDetected = true
-                            chargePct = M.max(chargePct, 55)
+                            chargePct = M.max(chargePct, 58)
                             telegraphNow = true
                             dangerRadius = M.max(dangerRadius, radH)
                             bestMeta = bestMeta or metaH
@@ -6699,18 +6784,20 @@ do
                             if not seenT then seenT = now; dangerAnimSeen[tr] = now end
                             local len, pos = tonumber(tr.Length) or 0, tonumber(tr.TimePosition) or 0
                             local aUlt = hasKw(an, ULT_ATK_KW)
-                            local animPct = (len > 0) and M.clamp((pos / len) * 100, 0, 100) or M.clamp(((now - seenT) / 0.50) * 100, 0, 100)
+                            local animPct = (len > 0) and M.clamp((pos / len) * 100, 0, 100) or M.clamp(((now - seenT) / 1.40) * 100, 0, 100)
                             chargingDetected = true
                             if aUlt then chargeKind = "Ultimate" end
                             chargePct = M.max(chargePct, animPct)
                             if len > 0 then chargeRem = M.max(chargeRem, M.max(0, len - pos)) end
                             chargeSig = chargeSig or ("anim_" .. tostring(tr) .. "_" .. M.floor(seenT * 10))
-                            if animPct >= 50 then
-                                telegraphNow = true; immediateNow = true
-                                dangerRadius = M.max(dangerRadius, aUlt and 62 or 38)
-                                bestMeta = bestMeta or {center = bPos, isUltimate = aUlt, isBeam = false}
-                            else
-                                inFirstHalfCharge = true
+                            if (not isBeachBoss) or aUlt then
+                                if animPct >= 58 then
+                                    telegraphNow = true; immediateNow = true
+                                    dangerRadius = M.max(dangerRadius, aUlt and 62 or 38)
+                                    bestMeta = bestMeta or {center = bPos, isUltimate = aUlt, isBeam = false}
+                                else
+                                    inFirstHalfCharge = true
+                                end
                             end
                         end
                     end
@@ -6855,69 +6942,88 @@ do
 
             for _, item in ipairs(activePartList) do
                 local inst, rec, curSz = item.inst, item.rec, item.curSz
-                local minCircleRad = (bossObj.isEvent and rec.meta and rec.meta.isYellowCircle) and 70 or 0
-                local padR = bossObj.isEvent and 28 or 20
-                local minR = bossObj.isEvent and 52 or 44
-                local maxR = bossObj.isEvent and 130 or 94
-                local rad = inst:IsA("BasePart") and M.clamp(M.max(curSz, minCircleRad) + padR, minR, maxR) or (rec.rad or 56)
-                local isImm = rec.immediate == true
-                local hasOuterRing, isOuterOfDual = false, false
-                local ringPct = nil
+                local isYellowPart = (rec.meta and rec.meta.isYellowCircle == true)
+                local isUltPart = isYellowPart or (rec.meta and rec.meta.isUltimate == true)
+                -- On Beach Boss strictly ignore anything that isn't the yellow ultimate AOE!
+                if not (isBeachBoss and not isUltPart) then
+                    local minCircleRad = (bossObj.isEvent and isYellowPart) and 70 or 0
+                    local padR = bossObj.isEvent and 28 or 22
+                    local minR = bossObj.isEvent and 52 or 48
+                    local maxR = bossObj.isEvent and 130 or 124
+                    local rad = inst:IsA("BasePart") and M.clamp(M.max(curSz, minCircleRad) + padR, minR, maxR) or (rec.rad or 56)
+                    local isImm = rec.immediate == true
+                    local ringPct = nil
 
-                if inst:IsA("BasePart") and #activePartList >= 2 then
-                    for _, other in ipairs(activePartList) do
-                        if other.inst ~= inst and other.inst:IsA("BasePart") and (other.inst.Position - inst.Position).Magnitude <= 22 then
-                            if other.curSz > curSz * 1.12 then
-                                hasOuterRing = true
-                                rad = M.max(rad, M.clamp(other.curSz + 20, 38, 108))
-                                ringPct = M.clamp((curSz / M.max(other.curSz, 0.1)) * 100, 0, 100)
-                            elseif curSz > other.curSz * 1.12 then
-                                isOuterOfDual = true
-                                rad = M.max(rad, M.clamp(curSz + 20, 38, 108))
-                                ringPct = M.clamp((other.curSz / M.max(curSz, 0.1)) * 100, 0, 100)
+                    if inst:IsA("BasePart") and #activePartList >= 2 then
+                        for _, other in ipairs(activePartList) do
+                            local otherYellow = (other.rec.meta and other.rec.meta.isYellowCircle == true)
+                            local sameKind = (isYellowPart == otherYellow)
+                            if other.inst ~= inst and sameKind and other.inst:IsA("BasePart") then
+                                local dxO = other.inst.Position.X - inst.Position.X
+                                local dzO = other.inst.Position.Z - inst.Position.Z
+                                if (dxO * dxO + dzO * dzO) <= (28 * 28) then
+                                    if other.curSz > curSz * 1.04 then
+                                        rad = M.max(rad, M.clamp(other.curSz + 24, 48, 128))
+                                        ringPct = M.clamp((curSz / M.max(other.curSz, 0.1)) * 100, 0, 100)
+                                    elseif curSz > other.curSz * 1.04 then
+                                        rad = M.max(rad, M.clamp(curSz + 24, 48, 128))
+                                        ringPct = M.clamp((other.curSz / M.max(curSz, 0.1)) * 100, 0, 100)
+                                    end
+                                end
                             end
                         end
                     end
-                end
 
-                local partAge = now - (rec.seen or now)
-                local partUlt = (rec.meta and rec.meta.isUltimate == true) or (curSz >= 26) or (rad >= 64)
-                if partUlt then chargeKind = "Ultimate" end
-                chargingDetected = true
-                if ringPct then
-                    chargePct = M.max(chargePct, ringPct)
-                else
-                    chargePct = M.max(chargePct, M.clamp((partAge / 0.85) * 100, 20, 100))
-                end
-                chargeSig = chargeSig or ("part_" .. tostring(M.floor((rec.seen or now) * 2)))
-
-                -- Trigger early & STAY OUTSIDE until the red rectangle / yellow circle actually disappears!
-                local ringReady = (ringPct ~= nil and ringPct >= 30)
-                local timedTelegraphReady = (partAge >= 0.12)
-                local fastThreat = isImm or (rec.meta and rec.meta.isRedRect == true)
-                if fastThreat or ringReady or timedTelegraphReady then
-                    telegraphNow = true
-                    if rad >= dangerRadius then
-                        dangerRadius = rad
-                        bestMeta = {
-                            center = inst:IsA("BasePart") and inst.Position or (rec.meta and rec.meta.center or bPos),
-                            isUltimate = partUlt,
-                            isBeam = rec.meta and rec.meta.isBeam or false,
-                            beamDir = rec.meta and rec.meta.beamDir or nil,
-                            part = inst:IsA("BasePart") and inst or nil,
-                        }
+                    local partAge = now - (rec.seen or now)
+                    local partUlt = isUltPart or (curSz >= 26) or (rad >= 64)
+                    if partUlt then chargeKind = "Ultimate" end
+                    chargingDetected = true
+                    local estDur = partUlt and 2.30 or 1.15
+                    if ringPct ~= nil then
+                        chargePct = M.max(chargePct, ringPct)
+                        chargeRem = M.max(chargeRem, M.max(0, (1 - ringPct / 100) * estDur))
+                    else
+                        local estPct = M.clamp((partAge / estDur) * 100, 5, 100)
+                        chargePct = M.max(chargePct, estPct)
+                        chargeRem = M.max(chargeRem, M.max(0, estDur - partAge))
                     end
-                    immediateNow = true
+                    chargeSig = chargeSig or ("part_" .. tostring(M.floor((rec.seen or now) * 2)))
+
+                    -- Wait until HALF or CLOSER (~58% charge) before dodging, then STAY OUTSIDE until the yellow circle vanishes!
+                    local readyToDodge = false
+                    if isImm and not isYellowPart then
+                        readyToDodge = true
+                    elseif ringPct ~= nil then
+                        readyToDodge = (ringPct >= (partUlt and 58 or 55))
+                    else
+                        -- Single-disc fallback: dodge at ~54-58% of charge duration (~1.25s on 2.3s yellow ultimate)
+                        readyToDodge = (partAge >= (partUlt and 1.25 or 0.60))
+                    end
+
+                    if readyToDodge then
+                        telegraphNow = true
+                        if rad >= dangerRadius then
+                            dangerRadius = rad
+                            bestMeta = {
+                                center = inst:IsA("BasePart") and inst.Position or (rec.meta and rec.meta.center or bPos),
+                                isUltimate = partUlt,
+                                isBeam = rec.meta and rec.meta.isBeam or false,
+                                beamDir = rec.meta and rec.meta.beamDir or nil,
+                                part = inst:IsA("BasePart") and inst or nil,
+                            }
+                        end
+                        immediateNow = true
+                    end
                 end
             end
 
             if telegraphNow then
                 BossEngine.wasTelegraphActive = true
                 if immediateNow then BossEngine.wasImmediateHazard = true end
-                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.55)
+                BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, now + 0.28)
             elseif BossEngine.wasTelegraphActive then
                 BossEngine.wasTelegraphActive = false
-                local holdDur = BossEngine.wasImmediateHazard and 0.55 or 0.38
+                local holdDur = BossEngine.wasImmediateHazard and 0.32 or 0.25
                 BossEngine.wasImmediateHazard = false
                 BossEngine.postAttackHoldUntil = M.max(BossEngine.postAttackHoldUntil, now + holdDur)
             end
@@ -7166,7 +7272,7 @@ do
             if BossEngine.tweenStartPos ~= nil then
                 local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
                 local refPart = (tgt.hitParts and tgt.hitParts[1]) or tgt.part or tgt.head
-                if not (root and refPart and refPart.Parent and (refPart.Position - root.Position).Magnitude <= 45) then
+                if not (root and refPart and refPart.Parent and (refPart.Position - root.Position).Magnitude <= 75) then
                     return
                 end
             end
@@ -7194,6 +7300,7 @@ do
             BossEngine.postAttackHoldUntil = 0
             BossEngine.lastHoverCF = nil
             BossEngine.tweenStartPos = nil
+            BossEngine.hasLandedOnHead = false
             BossEngine.currentBossModel = nil
             BossEngine.currentBossHum = nil
             BossEngine.currentTargetObj = nil
@@ -7210,6 +7317,7 @@ do
         if not (root and hum and hum.Health > 0) then
             BossEngine.lastHoverCF = nil
             BossEngine.tweenStartPos = nil
+            BossEngine.hasLandedOnHead = false
             BossEngine.currentTargetObj = nil
             BossEngine.statusText = "Action: Waiting for Character..."
             return
@@ -7252,6 +7360,7 @@ do
                 BossEngine.chargeSigKey = nil
                 BossEngine.dodgeEscapeDir = nil
                 BossEngine.tweenStartPos = nil
+                BossEngine.hasLandedOnHead = false
                 BossEngine.evadeUntil = 0
                 BossEngine.aoeFlagUntil = 0
                 BossEngine.wasTelegraphActive = false
@@ -7349,6 +7458,7 @@ do
             BossEngine.lastAttackSeq = nil
             BossEngine.dodgeEscapeDir = nil
             BossEngine.tweenStartPos = nil
+            BossEngine.hasLandedOnHead = false
             BossEngine.arenaFloorY = nil
             BossEngine.arenaCenter = nil
             BossEngine.smoothHoverY = nil
@@ -7545,7 +7655,7 @@ do
             if needPick then
                 if not BossEngine.evadingAOE then
                     BossEngine.evadeStartedAt = now
-                    BossEngine.evadeMinUntil = now + (isUlt and 1.05 or 0.75)
+                    BossEngine.evadeMinUntil = now + (isUlt and 0.55 or 0.45)
                 end
                 local candidates = {}
                 local radii = {
@@ -7670,25 +7780,47 @@ do
             headTopSurfaceY = headPos.Y
             headDepth = 2.5
         end
-        -- Offset behind the back edge of the boss's head (never in the middle!) while keeping feet on top of head level
+        -- Position FAR BEHIND & ABOVE the boss's head so the 2 red frontal skills never hit the player!
         local bodySpan = (target.bodyStats and target.bodyStats.maxSpan) or 18
-        local behindHeadOff = M.clamp(headDepth + bodySpan * 0.14, 3.2, 8.5)
+        local isBeachTgt = (target.isEvent ~= true)
+        local behindHeadOff = isBeachTgt
+            and M.clamp(headDepth + bodySpan * 0.70 + 12, 20, 36)
+            or  M.clamp(headDepth + bodySpan * 0.45 + 8, 14, 24)
         local backHeadPos = Vector3.new(headPos.X - faceDir.X * behindHeadOff, headPos.Y, headPos.Z - faceDir.Z * behindHeadOff)
 
-        local rawHoverY = M.max(headTopSurfaceY + hipOff + 0.65, minLegalY)
+        local headYPad = isBeachTgt and 2.2 or 1.5
+        local rawHoverY = M.max(headTopSurfaceY + hipOff + headYPad, minLegalY)
         if not BossEngine.smoothHoverY or M.abs(rawHoverY - BossEngine.smoothHoverY) > 18 then
             BossEngine.smoothHoverY = rawHoverY
         else
             BossEngine.smoothHoverY += (rawHoverY - BossEngine.smoothHoverY) * M.clamp((tonumber(dt) or 0.016) * 8, 0.08, 0.25)
         end
         local hoverPos = Vector3.new(backHeadPos.X, BossEngine.smoothHoverY, backHeadPos.Z)
-        local hoverCF = CFrame.new(hoverPos, hoverPos + faceDir)
+        local hoverCF = CFrame.new(hoverPos, Vector3.new(headPos.X, hoverPos.Y, headPos.Z))
 
-        -- HIGH-ARC TWEEN ONTO THE BOSS'S HEAD:
-        -- Rises ABOVE the boss's head FIRST (yAlpha = 1-(1-a)^3 + upward arc) so we NEVER clip through the boss's body/front aggro zone!
+        -- INSTANT TELEPORT when turning on Auto Boss / engaging a new boss so skill/ultimate does NOT trigger on approach!
+        -- Smooth high-arc tween ONLY turns on AFTER the player has landed behind the boss's head.
         local distToHead = (hoverPos - root.Position).Magnitude
         local nextCF = hoverCF
-        if distToHead > 360 then
+        if not BossEngine.hasLandedOnHead then
+            BossEngine.tweenStartPos = nil
+            if distToHead > 360 then
+                BossEngine.arenaFloorY = nil
+                BossEngine.lastFloorRayT = -100
+                BossEngine.streamSettleUntil = M.max(BossEngine.streamSettleUntil or 0, now + 0.65)
+                BossEngine.pendingPostSettleSnap = true
+                task.spawn(function()
+                    pcall(function()
+                        if Player.RequestStreamAroundAsync then
+                            Player:RequestStreamAroundAsync(hoverPos)
+                        end
+                    end)
+                end)
+            elseif distToHead <= 18 then
+                BossEngine.hasLandedOnHead = true
+            end
+            nextCF = hoverCF
+        elseif distToHead > 360 then
             BossEngine.tweenStartPos = nil
             BossEngine.arenaFloorY = nil
             BossEngine.lastFloorRayT = -100
@@ -10613,6 +10745,7 @@ do
                 BossEngine.aoeFlagUntil = 0
                 BossEngine.postAttackHoldUntil = 0
                 BossEngine.tweenStartPos = nil
+                BossEngine.hasLandedOnHead = false
                 Combat.lastTargetScan = -100
                 refreshBossChoiceHighlights()
             end)
@@ -10657,6 +10790,7 @@ do
                 BossEngine.currentTargetObj = nil
                 BossEngine.prevEngagedModel = nil
                 BossEngine.prevEngagedHP = nil
+                BossEngine.hasLandedOnHead = false
                 BossEngine.restoreNoClip()
                 BossEngine.returnToOrigin()
                 local root = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
@@ -11097,13 +11231,17 @@ local function startLoops()
         elseif d:IsA("Explosion") then
             if Config.AutoKillBoss and BossEngine.currentBossModel then
                 local tgtObj = BossEngine.currentTargetObj
-                local bRoot = tgtObj and (tgtObj.part or tgtObj.head) or BossEngine.currentBossModel.PrimaryPart
-                if bRoot and bRoot.Parent and (d.Position - bRoot.Position).Magnitude <= 160 then
-                    local nowS = M.clock()
-                    BossEngine.wasTelegraphActive = true
-                    BossEngine.wasImmediateHazard = true
-                    BossEngine.aoeFlagUntil = nowS + 0.45
-                    BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, nowS + 0.45)
+                local isEv = (tgtObj and tgtObj.isEvent == true)
+                local rawBlast = tonumber(d.BlastRadius) or 0
+                if isEv or rawBlast >= 45 then
+                    local bRoot = tgtObj and (tgtObj.part or tgtObj.head) or BossEngine.currentBossModel.PrimaryPart
+                    if bRoot and bRoot.Parent and (d.Position - bRoot.Position).Magnitude <= 160 then
+                        local nowS = M.clock()
+                        BossEngine.wasTelegraphActive = true
+                        BossEngine.wasImmediateHazard = true
+                        BossEngine.aoeFlagUntil = nowS + 0.35
+                        BossEngine.evadeUntil = M.max(BossEngine.evadeUntil, nowS + 0.35)
+                    end
                 end
             end
             return
@@ -11134,7 +11272,7 @@ local function startLoops()
         CharPhysics.bodyVel = nil; CharPhysics.bodyGyro = nil
         CharPhysics.trackedHum = nil; CharPhysics.trackedSizeChar = nil; CharPhysics.scaleBackup = {}
         CharPhysics.freezeCF = nil; CharPhysics.freezeChar = nil; CharPhysics.freezeAnchoredBackup = nil
-        BossEngine.lastHoverCF = nil; BossEngine.tweenStartPos = nil; BossEngine.noClipChar = nil
+        BossEngine.lastHoverCF = nil; BossEngine.tweenStartPos = nil; BossEngine.hasLandedOnHead = false; BossEngine.noClipChar = nil
         BossEngine.evadingAOE = false; BossEngine.evadeHoldCF = nil; BossEngine.arenaCenter = nil; BossEngine.dodgeEscapeDir = nil; BossEngine.evadeUntil = 0; BossEngine.aoeFlagUntil = 0
         BossEngine.wasTelegraphActive = false; BossEngine.wasImmediateHazard = false; BossEngine.postAttackHoldUntil = 0; BossEngine.lastSafeDist = 380
         BossEngine.currentTargetObj = nil; BossEngine.prevEngagedModel = nil; BossEngine.prevEngagedHP = nil
@@ -11996,7 +12134,7 @@ local function resetAllFeaturesToNormal()
     BossEngine.lastAttackSeq = nil
     BossEngine.trackedDangerInsts = setmetatable({}, {__mode = "k"}); BossEngine.lastSafeDist = 380
     BossEngine.currentBossModel = nil; BossEngine.currentTargetObj = nil; BossEngine.noClipChar = nil
-    BossEngine.prevEngagedModel = nil; BossEngine.prevEngagedHP = nil
+    BossEngine.prevEngagedModel = nil; BossEngine.prevEngagedHP = nil; BossEngine.hasLandedOnHead = false
     Perf.frameBudgetSec = 0.0016
     Perf.activeWorkers = 2
     Perf.aiSchedulerMode = "Standard"
