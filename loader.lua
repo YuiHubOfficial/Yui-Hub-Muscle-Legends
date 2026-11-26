@@ -1,5 +1,5 @@
 --[[
-    🌸🐾💖 Yui Hub    |    WELCOME <Roblox username> (EARLY ACCESS - Fixed Boss Auto-Kill & Integrated Floor-Level Evade, Freeze Character, Fixed Playtime Rewards & Zero-Lag Engine) 💖🐾🌸
+    🌸🐾💖 Yui Hub    |    WELCOME <Roblox display name> (EARLY ACCESS - Fixed Boss Auto-Kill & Integrated Floor-Level Evade, Freeze Character, Fixed Playtime Rewards & Zero-Lag Engine) 💖🐾🌸
 - Boss Tab (Auto Kill Boss + Mobile Boss Selector + Integrated AOE/Ultimate Evade):
   * Easy mobile 2-column selector: Common, Rare, Epic, Legendary, Mythic, Rainbow/Admin, Alien Boss (Event) & All Bosses
   * Strict creature-verified Boss discovery (excludes Shops, NPCs, Arenas, Bases, Pets & generic props!)
@@ -1003,7 +1003,7 @@ do
 
         UILib.new("TextLabel", {
             Size = UDim2.new(1, -145, 1, 0), Position = UDim2.fromOffset(23, 0), BackgroundTransparency = 1,
-            Text = "🌸 Yui Hub  |  WELCOME " .. Player.Name, TextColor3 = Theme.Text, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
+            Text = "🌸 Yui Hub  |  WELCOME " .. ((Player.DisplayName and Player.DisplayName ~= "") and Player.DisplayName or Player.Name), TextColor3 = Theme.Text, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, Header)
         UILib.new("TextLabel", {
             Size = UDim2.fromOffset(78, 14), Position = UDim2.new(1, -138, 0.5, -7), BackgroundTransparency = 1,
