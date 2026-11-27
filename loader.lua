@@ -1,8 +1,8 @@
 --[[
     🌸🐾💖 Yui Hub    |    WELCOME <Roblox display name> (EARLY ACCESS - Late Yellow-Ult Evade, Turbo Anti-Twist Punch, OLED Black 3D Saver, 4-Layer Popup Shield & AI Scanner v4) 💖🐾🌸
 - Boss Tab (Auto Kill Boss + Mobile Boss Selector + Late Yellow-Ultimate Evade):
-  * Easy mobile 2-column selector: Common, Rare, Epic, Legendary, Mythic, Rainbow/Admin, Alien Boss (Event) & All Bosses
-  * Instant teleport far behind boss's head on engage (tween only after landing) + expanded hitbox for effortless hits
+  * Easy mobile 2-column selector: Common, Rare, Epic, Legendary, Mythic, Rainbow/Admin, Alien Boss (Event) & All Bosses (Beach priority -> Alien fallback)
+  * Instant teleport behind boss's back head on engage (smooth tween after landing) + expanded hitbox + reliable Boss Chest auto-claim
   * Ignores the first 2 red frontal skills on all bosses; dodges ONLY yellow ultimate AOE <1s before impact (~72% charge)
 - Turbo Punch Tab:
   * Faster Auto Punch & Boss Burst with anti-twist Animator/C0 guard + smooth boxing animations & Freeze Character
@@ -4062,7 +4062,13 @@ local BossEngine = {
     savedOriginCF = nil,
     collectingChest = false,
     chestWaitUntil = 0,
+    chestFoundAt = 0,
+    chestLastTriggerT = 0,
+    chestLastScanT = -100,
+    chestTriggerCount = 0,
     trackedChest = nil,
+    trackedChestPrompt = nil,
+    ignoredChests = setmetatable({}, {__mode = "k"}),
     countedDead = setmetatable({}, {__mode = "k"}),
     lastAttackSeq = nil,
     lastAoeCheck = -100,
@@ -5527,7 +5533,8 @@ do
         if not force and (now - Combat.lastTargetScan < scanMinInt) then return end
         Combat.lastTargetScan = now
 
-        if not hasLockedBoss then
+        local fightingEventInAll = (Config.SelectedBoss == "All Bosses (Auto)" and BossEngine.currentTargetObj ~= nil and BossEngine.currentTargetObj.isEvent == true)
+        if not hasLockedBoss or fightingEventInAll then
             scanFastRealBossSources()
         end
 
@@ -5882,8 +5889,15 @@ do
         local wantTier = selOpt and selOpt.tier
 
         if keys[1] == "*" then
+            -- Priority 1: Non-Event / Beach Bosses FIRST
             for _, b in ipairs(Combat.bossTargets) do
-                if b and b.model and b.model.Parent and b.part and b.part.Parent and (tonumber(b.hp) or 0) > 0 then
+                if b and b.model and b.model.Parent and b.part and b.part.Parent and (tonumber(b.hp) or 0) > 0 and b.isEvent ~= true then
+                    return b
+                end
+            end
+            -- Priority 2: Alien / Event Bosses only when NO Non-Event / Beach Boss is spawned
+            for _, b in ipairs(Combat.bossTargets) do
+                if b and b.model and b.model.Parent and b.part and b.part.Parent and (tonumber(b.hp) or 0) > 0 and b.isEvent == true then
                     return b
                 end
             end
@@ -7106,74 +7120,258 @@ do
         return hasView and not hasOpen
     end
 
-    local function findNearbyBossChest(refPos)
-        if not refPos then return nil, nil end
-        local containers = {workspace}
-        local seenCont = {}
-        local wsEv = workspace:FindFirstChild("Events")
-        if wsEv then
-            containers[#containers + 1] = wsEv
-            for _, sub in ipairs(wsEv:GetChildren()) do containers[#containers + 1] = sub end
-        end
-        for _, fn in ipairs({"Chests", "BossArena", "bossMaps", "EventArena"}) do
-            local c = workspace:FindFirstChild(fn)
-            if c then containers[#containers + 1] = c end
-        end
-        local bestChest, bestPart, bestDist = nil, nil, 150
-        local function considerChest(ch)
-            if not (ch and ch.Parent and (ch:IsA("Model") or ch:IsA("BasePart")) and ch ~= Player.Character) then return end
-            if seenCont[ch] then return end
-            seenCont[ch] = true
-            local nl = ch.Name:lower()
-            if (nl:find("chest") or nl:find("loot") or nl:find("drop") or (CollectionService and (CollectionService:HasTag(ch, "BossEventChest") or CollectionService:HasTag(ch, "AlienBossChest"))))
-                and not (nl:find("shop") or nl:find("store") or nl:find("vip") or nl:find("group") or nl:find("daily"))
-                and not isViewOnlyPromptOrChest(ch) then
-                local part = ch:IsA("BasePart") and ch or (ch.PrimaryPart or ch:FindFirstChild("Main", true) or ch:FindFirstChildWhichIsA("BasePart", true))
-                if part then
-                    local d = (part.Position - refPos).Magnitude
-                    if d <= bestDist then
-                        bestDist = d
-                        bestChest = ch
-                        bestPart = part
-                    end
-                end
-            end
-        end
-        if CollectionService then
-            for _, cTag in ipairs({"BossEventChest", "AlienBossChest"}) do
-                local okC, tagged = pcall(CollectionService.GetTagged, CollectionService, cTag)
-                if okC and tagged then
-                    for _, tc in ipairs(tagged) do considerChest(tc) end
-                end
-            end
-        end
-        for _, cont in ipairs(containers) do
-            for _, ch in ipairs(cont:GetChildren()) do
-                considerChest(ch)
-            end
-        end
-        return bestChest, bestPart
-    end
-
     local function isPromptCollectable(pp)
+        if not (pp and pp.Parent and pp:IsA("ProximityPrompt")) then return false end
+        if pp.Enabled == false then return false end
         local pt = ((pp.ActionText or "") .. " " .. (pp.ObjectText or "") .. " " .. pp.Name):lower()
-        if (pt:find("view") or pt:find("preview")) and not (pt:find("open") or pt:find("claim") or pt:find("collect")) then
+        if (pt:find("view") or pt:find("preview") or pt:find("showcase")) and not (pt:find("open") or pt:find("claim") or pt:find("collect")) then
             return false
         end
         return true
     end
 
-    local function collectBossChest(chest, chestPart, root)
-        if not (chest and chest.Parent and chestPart and root) then return end
-        if fireproximityprompt then
-            for _, d in ipairs(chest:GetDescendants()) do
-                if d:IsA("ProximityPrompt") and isPromptCollectable(d) then pcall(fireproximityprompt, d) end
-            end
-            if chestPart:IsA("BasePart") then
-                local pp = chestPart:FindFirstChildOfClass("ProximityPrompt")
-                if pp and isPromptCollectable(pp) then pcall(fireproximityprompt, pp) end
+    local function isNonBossStaticChest(strLow)
+        if not strLow or strLow == "" then return false end
+        if strLow:find("boss", 1, true) then return false end
+        return (strLow:find("shop", 1, true) or strLow:find("store", 1, true) or strLow:find("vip", 1, true)
+            or strLow:find("group", 1, true) or strLow:find("daily", 1, true) or strLow:find("king", 1, true)
+            or strLow:find("legends", 1, true) or strLow:find("mythical", 1, true) or strLow:find("enchanted", 1, true)
+            or strLow:find("golden", 1, true) or strLow:find("magma", 1, true) or strLow:find("frost", 1, true)) ~= nil
+    end
+
+    local function getPromptPartAndHost(pp)
+        if not (pp and pp.Parent) then return nil, nil, nil end
+        local p = pp.Parent
+        local part, pos = nil, nil
+        if p:IsA("Attachment") then
+            pos = p.WorldPosition
+            if p.Parent and p.Parent:IsA("BasePart") then part = p.Parent end
+        elseif p:IsA("BasePart") then
+            part = p; pos = p.Position
+        elseif p:IsA("Model") then
+            part = p.PrimaryPart or p:FindFirstChild("Main", true) or p:FindFirstChildWhichIsA("BasePart", true)
+            pos = part and part.Position or nil
+        end
+        if not part then return nil, nil, nil end
+        local host = part:FindFirstAncestorOfClass("Model")
+        if host and (host == workspace or host == Player.Character or host.Name:lower():find("arena", 1, true) or host.Name:lower() == "map") then
+            host = part
+        end
+        return host or part, part, pos or part.Position
+    end
+
+    local function hasActiveCollectablePrompt(inst)
+        if not (inst and inst.Parent) then return nil end
+        if inst:IsA("ProximityPrompt") then
+            return isPromptCollectable(inst) and inst or nil
+        end
+        for _, d in ipairs(inst:GetDescendants()) do
+            if d:IsA("ProximityPrompt") and isPromptCollectable(d) then
+                return d
             end
         end
+        return nil
+    end
+
+    local function findNearbyBossChest(refPos, strictBossOnly)
+        if not refPos then return nil, nil, nil end
+        local now = M.clock()
+        local bestChest, bestPart, bestPrompt, bestScore = nil, nil, nil, -1e9
+        local seenInst = {}
+
+        local function isIgnored(inst)
+            if not inst then return false end
+            local untilT = BossEngine.ignoredChests[inst]
+            return untilT ~= nil and now < untilT
+        end
+
+        local function considerPrompt(pp)
+            if not isPromptCollectable(pp) or isIgnored(pp) then return end
+            local host, part, pPos = getPromptPartAndHost(pp)
+            if not (host and part and pPos) or host == Player.Character or isIgnored(host) then return end
+
+            local objTxt = tostring(pp.ObjectText or ""):lower()
+            local actTxt = tostring(pp.ActionText or ""):lower()
+            local ppName = pp.Name:lower()
+            local hostName = host.Name:lower()
+            local partName = part.Name:lower()
+            local ancName = (host.Parent and host.Parent.Name or ""):lower()
+            local combined = objTxt .. " " .. actTxt .. " " .. ppName .. " " .. hostName .. " " .. partName
+
+            if isNonBossStaticChest(objTxt .. " " .. hostName .. " " .. partName) then return end
+            if isViewOnlyPromptOrChest(host) and not (actTxt:find("claim", 1, true) or actTxt:find("open", 1, true) or actTxt:find("collect", 1, true)) then
+                return
+            end
+
+            local hasBossWord = (combined:find("boss", 1, true) ~= nil) or (ancName:find("boss", 1, true) ~= nil)
+            local hasChestOrReward = (combined:find("chest", 1, true) ~= nil)
+                or (combined:find("claim reward", 1, true) ~= nil)
+                or (combined:find("loot", 1, true) ~= nil)
+                or (actTxt:find("claim", 1, true) ~= nil)
+                or (actTxt:find("collect", 1, true) ~= nil)
+            local hasClaimAction = (actTxt:find("claim", 1, true) or actTxt:find("open", 1, true) or actTxt:find("collect", 1, true)) ~= nil
+
+            if strictBossOnly and not (hasBossWord and hasChestOrReward) then
+                return
+            end
+            if not (hasChestOrReward and (hasBossWord or hasClaimAction)) then
+                return
+            end
+
+            local dist = (pPos - refPos).Magnitude
+            local maxRange = hasBossWord and 260 or 145
+            if dist > maxRange then return end
+
+            local score = (hasBossWord and 5000 or 1000) + (hasClaimAction and 800 or 0) - dist
+            if score > bestScore then
+                bestScore = score
+                bestChest = host
+                bestPart = part
+                bestPrompt = pp
+            end
+        end
+
+        local function considerChest(ch)
+            if not (ch and ch.Parent and (ch:IsA("Model") or ch:IsA("BasePart")) and ch ~= Player.Character) then return end
+            if seenInst[ch] or isIgnored(ch) then return end
+            seenInst[ch] = true
+            local nl = ch.Name:lower()
+            local isTagged = CollectionService and (
+                CollectionService:HasTag(ch, "BossEventChest")
+                or CollectionService:HasTag(ch, "AlienBossChest")
+                or CollectionService:HasTag(ch, "BossChest")
+                or CollectionService:HasTag(ch, "RewardChest")
+            )
+            local isBossNamed = nl:find("boss", 1, true) ~= nil
+            local isChestNamed = (nl:find("chest", 1, true) or nl:find("loot", 1, true) or nl:find("drop", 1, true)) ~= nil
+            if (isTagged or isChestNamed) and not isNonBossStaticChest(nl) and not isViewOnlyPromptOrChest(ch) then
+                if strictBossOnly and not (isTagged or isBossNamed) then return end
+                local pp = hasActiveCollectablePrompt(ch)
+                if pp and isIgnored(pp) then return end
+                local part = ch:IsA("BasePart") and ch or (ch.PrimaryPart or ch:FindFirstChild("Main", true) or ch:FindFirstChildWhichIsA("BasePart", true))
+                if part then
+                    local dist = (part.Position - refPos).Magnitude
+                    local maxR = (isTagged or isBossNamed) and 240 or 150
+                    if dist <= maxR then
+                        local score = ((isTagged or isBossNamed) and 4000 or 600) + (pp and 1200 or 0) - dist
+                        if score > bestScore then
+                            bestScore = score
+                            bestChest = ch
+                            bestPart = part
+                            bestPrompt = pp
+                        end
+                    end
+                end
+            end
+        end
+
+        if CollectionService then
+            for _, cTag in ipairs({"BossEventChest", "AlienBossChest", "BossChest", "RewardChest"}) do
+                local okC, tagged = pcall(CollectionService.GetTagged, CollectionService, cTag)
+                if okC and tagged then
+                    for _, tc in ipairs(tagged) do
+                        if tc:IsA("ProximityPrompt") then considerPrompt(tc)
+                        else considerChest(tc) end
+                    end
+                end
+            end
+        end
+
+        local deepRoots = {}
+        local wsEv = workspace:FindFirstChild("Events")
+        if wsEv then deepRoots[#deepRoots + 1] = wsEv end
+        for _, fn in ipairs({"Chests", "BossArena", "BossEvent", "bossMaps", "BossMaps", "EventArena", "BossChests"}) do
+            local c = workspace:FindFirstChild(fn)
+            if c then deepRoots[#deepRoots + 1] = c end
+        end
+        for _, cont in ipairs(deepRoots) do
+            for _, d in ipairs(cont:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then considerPrompt(d)
+                elseif d:IsA("Model") or d:IsA("BasePart") then considerChest(d) end
+            end
+        end
+        for _, ch in ipairs(workspace:GetChildren()) do
+            if ch:IsA("Model") or ch:IsA("BasePart") then considerChest(ch) end
+        end
+
+        -- Full workspace ProximityPrompt sweep fallback (catches Beach Boss chests nested inside Map/Islands/Beach/Arena!)
+        if not bestPrompt then
+            for _, d in ipairs(workspace:GetDescendants()) do
+                if d:IsA("ProximityPrompt") then
+                    considerPrompt(d)
+                end
+            end
+        end
+
+        return bestChest, bestPart, bestPrompt
+    end
+
+    local function triggerPromptAllMethods(pp, attemptNum)
+        if not isPromptCollectable(pp) then return false end
+        pcall(function()
+            pp.HoldDuration = 0
+            pp.RequiresLineOfSight = false
+            if (tonumber(pp.MaxActivationDistance) or 0) < 45 then
+                pp.MaxActivationDistance = 45
+            end
+        end)
+        if fireproximityprompt then
+            if (attemptNum % 2) == 1 then
+                pcall(fireproximityprompt, pp)
+            else
+                pcall(fireproximityprompt, pp, 1)
+                pcall(fireproximityprompt, pp)
+            end
+        end
+        pcall(function()
+            pp:InputHoldBegin()
+            task.delay(0.07, function()
+                pcall(pp.InputHoldEnd, pp)
+            end)
+        end)
+        -- Backup: VirtualInputManager key press for prompts gated on native client input
+        if (attemptNum % 3) == 0 then
+            pcall(function()
+                local kc = pp.KeyboardKeyCode
+                if kc and kc ~= Enum.KeyCode.Unknown then
+                    local vim = SafeService("VirtualInputManager")
+                    if vim then
+                        vim:SendKeyEvent(true, kc, false, game)
+                        task.delay(0.08, function()
+                            pcall(vim.SendKeyEvent, vim, false, kc, false, game)
+                        end)
+                    end
+                end
+            end)
+        end
+        return true
+    end
+
+    local function collectBossChest(chest, chestPart, chestPrompt, root, now)
+        if not (chest and chest.Parent and chestPart and root) then return end
+        local curT = now or M.clock()
+        if (curT - (BossEngine.chestLastTriggerT or 0)) < 0.16 then return end
+        BossEngine.chestLastTriggerT = curT
+        BossEngine.chestTriggerCount = (BossEngine.chestTriggerCount or 0) + 1
+        local attempt = BossEngine.chestTriggerCount
+
+        local firedPrompt = false
+        if chestPrompt and isPromptCollectable(chestPrompt) then
+            firedPrompt = triggerPromptAllMethods(chestPrompt, attempt)
+        end
+        for _, d in ipairs(chest:GetDescendants()) do
+            if d:IsA("ProximityPrompt") and d ~= chestPrompt and isPromptCollectable(d) then
+                if triggerPromptAllMethods(d, attempt) then firedPrompt = true end
+            end
+        end
+        if chestPart:IsA("BasePart") then
+            for _, ch in ipairs(chestPart:GetChildren()) do
+                if ch:IsA("ProximityPrompt") and ch ~= chestPrompt and isPromptCollectable(ch) then
+                    if triggerPromptAllMethods(ch, attempt) then firedPrompt = true end
+                end
+            end
+        end
+
         if not chest.Parent then return end
         if fireclickdetector then
             for _, d in ipairs(chest:GetDescendants()) do
@@ -7184,19 +7382,23 @@ do
                 if cd then pcall(fireclickdetector, cd) end
             end
         end
+
         if not chest.Parent then return end
-        if #Remotes.chestRemotes == 0 then Remotes.refresh(false) end
-        for _, crem in ipairs(Remotes.chestRemotes) do
-            if crem and crem.Parent then
-                if crem:IsA("RemoteFunction") then
-                    task.spawn(pcall, crem.InvokeServer, crem, chest.Name)
-                    task.spawn(pcall, crem.InvokeServer, crem, chest)
-                else
-                    pcall(crem.FireServer, crem, chest.Name)
-                    pcall(crem.FireServer, crem, chest)
+        if not firedPrompt or (attempt >= 3 and (attempt % 2 == 1)) then
+            if #Remotes.chestRemotes == 0 then Remotes.refresh(false) end
+            for _, crem in ipairs(Remotes.chestRemotes) do
+                if crem and crem.Parent then
+                    if crem:IsA("RemoteFunction") then
+                        task.spawn(pcall, crem.InvokeServer, crem, chest.Name)
+                        task.spawn(pcall, crem.InvokeServer, crem, chest)
+                    else
+                        pcall(crem.FireServer, crem, chest.Name)
+                        pcall(crem.FireServer, crem, chest)
+                    end
                 end
             end
         end
+
         if not chest.Parent then return end
         if firetouchinterest then
             pcall(firetouchinterest, root, chestPart, 0)
@@ -7213,6 +7415,9 @@ do
     function BossEngine.returnToOrigin()
         BossEngine.collectingChest = false
         BossEngine.trackedChest = nil
+        BossEngine.trackedChestPrompt = nil
+        BossEngine.chestFoundAt = 0
+        BossEngine.chestTriggerCount = 0
         BossEngine.lastHoverCF = nil
         if BossEngine.savedOriginCF then
             local char = Player.Character
@@ -7314,7 +7519,9 @@ do
             local actuallyDead = (not wasPending and lastMax > 0 and lastHP <= 0)
             local despawned = (not tracked.Parent) and not actuallyDead
             if actuallyDead or despawned then
-                if actuallyDead and not BossEngine.countedDead[tracked] then
+                local engagedDur = now - (BossEngine.engagedAt or now)
+                local likelyKilledOnDespawn = despawned and (BossEngine.prevEngagedModel == tracked) and (engagedDur >= 0.35)
+                if (actuallyDead or likelyKilledOnDespawn) and not BossEngine.countedDead[tracked] then
                     BossEngine.countedDead[tracked] = true
                     if BossEngine.prevEngagedModel == tracked and BossEngine.prevEngagedHP and BossEngine.prevEngagedHP > 0 then
                         BossEngine.damageDealt += BossEngine.prevEngagedHP
@@ -7327,9 +7534,16 @@ do
                     else
                         BossEngine.normalKills += 1
                     end
+                end
+                -- Always check for a boss reward chest after boss dies OR despawns (Beach Boss often destroys the model on kill before HP reads 0!)
+                if actuallyDead or likelyKilledOnDespawn then
                     BossEngine.collectingChest = true
-                    BossEngine.chestWaitUntil = now + 1.8
+                    BossEngine.chestWaitUntil = now + 3.2
+                    BossEngine.chestFoundAt = 0
+                    BossEngine.chestTriggerCount = 0
+                    BossEngine.chestLastScanT = -100
                     BossEngine.trackedChest = nil
+                    BossEngine.trackedChestPrompt = nil
                 end
                 BossEngine.lastTrackedBossModel = nil
                 BossEngine.evadingAOE = false
@@ -7362,36 +7576,88 @@ do
 
         if BossEngine.collectingChest then
             BossEngine.tweenStartPos = nil
-            if BossEngine.trackedChest and not BossEngine.trackedChest.Parent then
-                BossEngine.returnToOrigin()
-                BossEngine.statusText = "Action: Chest Collected — Returned to Origin"
-                return
+            local finishChestPhase = function(msg)
+                BossEngine.collectingChest = false
+                BossEngine.trackedChest = nil
+                BossEngine.trackedChestPrompt = nil
+                BossEngine.chestFoundAt = 0
+                BossEngine.chestTriggerCount = 0
+                BossEngine.lastHoverCF = nil
+                local nextBoss = getSelectedBossObj()
+                if nextBoss then
+                    BossEngine.statusText = msg .. " — Next Boss"
+                else
+                    BossEngine.returnToOrigin()
+                    BossEngine.statusText = msg .. " — Returned to Origin"
+                end
             end
-            local chest, chestPart = findNearbyBossChest(BossEngine.lastBossDeathPos)
+
+            -- If tracked chest or its ProximityPrompt disappeared/disabled after triggering, claim succeeded!
+            if BossEngine.trackedChest then
+                local chestGone = not BossEngine.trackedChest.Parent
+                local promptDone = (BossEngine.trackedChestPrompt ~= nil)
+                    and ((not BossEngine.trackedChestPrompt.Parent) or (BossEngine.trackedChestPrompt.Enabled == false))
+                if chestGone or promptDone then
+                    finishChestPhase("Action: Boss Chest Claimed")
+                    return
+                end
+            end
+
+            local chest, chestPart, chestPrompt = BossEngine.trackedChest, nil, BossEngine.trackedChestPrompt
+            if chest and chest.Parent then
+                if chestPrompt and chestPrompt.Parent then
+                    local _, pPart = getPromptPartAndHost(chestPrompt)
+                    chestPart = pPart
+                end
+                if not chestPart then
+                    chestPart = chest:IsA("BasePart") and chest or (chest.PrimaryPart or chest:FindFirstChild("Main", true) or chest:FindFirstChildWhichIsA("BasePart", true))
+                end
+            else
+                chest, chestPart, chestPrompt = nil, nil, nil
+                if (now - (BossEngine.chestLastScanT or 0)) >= 0.12 then
+                    BossEngine.chestLastScanT = now
+                    local refP = BossEngine.lastBossDeathPos or root.Position
+                    chest, chestPart, chestPrompt = findNearbyBossChest(refP, false)
+                    if not chest and BossEngine.lastBossDeathPos and (root.Position - BossEngine.lastBossDeathPos).Magnitude > 40 then
+                        chest, chestPart, chestPrompt = findNearbyBossChest(root.Position, true)
+                    end
+                end
+            end
+
             if chest and chestPart then
-                BossEngine.trackedChest = chest
-                local cPos = chestPart.Position + Vector3.new(0, 2, 0)
+                if BossEngine.trackedChest ~= chest then
+                    BossEngine.trackedChest = chest
+                    BossEngine.trackedChestPrompt = chestPrompt or hasActiveCollectablePrompt(chest)
+                    BossEngine.chestFoundAt = now
+                    BossEngine.chestTriggerCount = 0
+                    BossEngine.chestWaitUntil = M.max(BossEngine.chestWaitUntil, now + 4.0)
+                elseif not BossEngine.trackedChestPrompt then
+                    BossEngine.trackedChestPrompt = chestPrompt or hasActiveCollectablePrompt(chest)
+                end
+                local cPos = chestPart.Position + Vector3.new(0, 2.5, 0)
                 local cCF = CFrame.new(cPos)
                 BossEngine.lastHoverCF = cCF
                 root.AssemblyLinearVelocity = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
                 root.CFrame = cCF
-                collectBossChest(chest, chestPart, root)
-                if not chest.Parent or now >= BossEngine.chestWaitUntil then
-                    BossEngine.returnToOrigin()
-                    BossEngine.statusText = "Action: Chest Collected — Returned to Origin"
+                collectBossChest(chest, chestPart, BossEngine.trackedChestPrompt, root, now)
+
+                local doneNow = (not chest.Parent)
+                    or (BossEngine.trackedChestPrompt ~= nil and ((not BossEngine.trackedChestPrompt.Parent) or (BossEngine.trackedChestPrompt.Enabled == false)))
+                if doneNow then
+                    finishChestPhase("Action: Boss Chest Claimed")
+                    return
+                elseif now >= BossEngine.chestWaitUntil then
+                    BossEngine.ignoredChests[chest] = now + 25
+                    if BossEngine.trackedChestPrompt then BossEngine.ignoredChests[BossEngine.trackedChestPrompt] = now + 25 end
+                    finishChestPhase("Action: Chest Timeout")
                     return
                 end
-                BossEngine.statusText = "Action: Collecting Boss Chest..."
+                BossEngine.statusText = "Action: Claiming Boss Chest..."
                 return
             else
-                local nextTgt = getSelectedBossObj()
-                if nextTgt then
-                    BossEngine.collectingChest = false
-                    BossEngine.trackedChest = nil
-                elseif now >= BossEngine.chestWaitUntil then
-                    BossEngine.returnToOrigin()
-                    BossEngine.statusText = "Action: Returned to Origin"
+                if now >= BossEngine.chestWaitUntil then
+                    finishChestPhase("Action: No Chest Found")
                     return
                 else
                     BossEngine.statusText = "Action: Waiting for Boss Chest..."
@@ -7402,6 +7668,27 @@ do
 
         local target = getSelectedBossObj()
         if not target then
+            -- If an unclaimed Boss Chest is already sitting in the arena (e.g., player killed boss right before enabling or prompt spawned late), claim it!
+            if (now - (BossEngine.chestLastScanT or 0)) >= 0.65 then
+                BossEngine.chestLastScanT = now
+                local refP = BossEngine.lastBossDeathPos or root.Position
+                local idleChest, idlePart, idlePrompt = findNearbyBossChest(refP, true)
+                if not idleChest and refP ~= root.Position then
+                    idleChest, idlePart, idlePrompt = findNearbyBossChest(root.Position, true)
+                end
+                if idleChest and idlePart then
+                    if not BossEngine.savedOriginCF then BossEngine.savedOriginCF = root.CFrame end
+                    BossEngine.collectingChest = true
+                    BossEngine.trackedChest = idleChest
+                    BossEngine.trackedChestPrompt = idlePrompt or hasActiveCollectablePrompt(idleChest)
+                    BossEngine.chestFoundAt = now
+                    BossEngine.chestTriggerCount = 0
+                    BossEngine.chestWaitUntil = now + 4.0
+                    BossEngine.statusText = "Action: Claiming Boss Chest..."
+                    return
+                end
+            end
+
             BossEngine.evadingAOE = false
             BossEngine.dodgeEscapeDir = nil
             BossEngine.tweenStartPos = nil
@@ -11254,6 +11541,14 @@ local function startLoops()
                 BossEngine.lastAoeCheck = -100
             else
                 BossEngine.recentSpawnedParts[d] = nowS
+            end
+            return
+        elseif d:IsA("ProximityPrompt") then
+            if Config.AutoKillBoss then
+                local pt = ((d.ObjectText or "") .. " " .. (d.ActionText or "") .. " " .. d.Name):lower()
+                if pt:find("boss", 1, true) or pt:find("chest", 1, true) or pt:find("claim reward", 1, true) then
+                    BossEngine.chestLastScanT = -100
+                end
             end
             return
         elseif d:IsA("Explosion") then
