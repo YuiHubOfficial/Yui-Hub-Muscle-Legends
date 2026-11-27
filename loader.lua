@@ -20,6 +20,89 @@
 local YUI_AVATAR_FILE = "yui_avatar.jpg"
 local YUI_AVATAR_BASE64 = [[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
 ]]
+local YUI_ORB_FILE = "yui_status_orb.jpg"
+local YUI_ORB_BASE64 = [[
+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
+]]
 
 local function decodeYuiAvatarBase64(encoded)
     local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -70,26 +153,32 @@ local function decodeYuiAvatarBase64(encoded)
     return table.concat(output)
 end
 
-local function installYuiAvatar()
+local function installBundledJpg(fileName, encodedData)
     if type(writefile) ~= "function" then
         return false
     end
 
     if type(isfile) == "function" then
-        local existsOk, exists = pcall(isfile, YUI_AVATAR_FILE)
+        local existsOk, exists = pcall(isfile, fileName)
         if existsOk and exists then
             return true
         end
     end
 
-    local decodeOk, imageBytes = pcall(decodeYuiAvatarBase64, YUI_AVATAR_BASE64)
+    local decodeOk, imageBytes = pcall(decodeYuiAvatarBase64, encodedData)
     if not decodeOk or type(imageBytes) ~= "string"
         or string.sub(imageBytes, 1, 3) ~= "\255\216\255" then
         return false
     end
 
-    local writeOk = pcall(writefile, YUI_AVATAR_FILE, imageBytes)
+    local writeOk = pcall(writefile, fileName, imageBytes)
     return writeOk
+end
+
+local function installYuiAvatar()
+    local a = installBundledJpg(YUI_AVATAR_FILE, YUI_AVATAR_BASE64)
+    local b = installBundledJpg(YUI_ORB_FILE, YUI_ORB_BASE64)
+    return a or b
 end
 
 pcall(installYuiAvatar)
@@ -831,7 +920,26 @@ do
                 local baseRot = (t * 175) % 360
                 if vis then
                     mainStrokeGrad.Rotation = (baseRot * 0.85) % 360
-                    statusLED.BackgroundTransparency = 0.16 + M.abs(M.sin(t * 2.8)) * 0.48
+                    if type(statusLED) == "table" then
+                        if statusLED.img and statusLED.img.Parent then
+                            statusLED.img.Rotation = (t * 115) % 360
+                        end
+                        if statusLED.outerGrad and statusLED.outerGrad.Parent then
+                            statusLED.outerGrad.Rotation = (t * 210) % 360
+                        end
+                        if statusLED.innerGrad and statusLED.innerGrad.Parent then
+                            statusLED.innerGrad.Rotation = (360 - ((t * 165) % 360)) % 360
+                        end
+                        if statusLED.scale and statusLED.scale.Parent then
+                            statusLED.scale.Scale = 1.0 + 0.06 * M.sin(t * 3.6)
+                        end
+                        if statusLED.core and statusLED.core.Parent then
+                            local sh = M.abs(M.sin(t * 4.2))
+                            statusLED.core.BackgroundTransparency = statusLED.hasImg and (0.64 + sh * 0.28) or (0.12 + sh * 0.36)
+                        end
+                    elseif statusLED and statusLED.Parent then
+                        statusLED.BackgroundTransparency = 0.16 + M.abs(M.sin(t * 2.8)) * 0.48
+                    end
                 end
                 local activeTab = Runtime.activeTabName
                 local pulseGlow = 0.5 + 0.5 * M.sin(t * 5.2)
@@ -1008,11 +1116,62 @@ do
         local Header = UILib.new("Frame", {Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Theme.Header, BorderSizePixel = 0, ZIndex = 5}, UI.Main)
         UILib.corner(Header, UDim.new(0, 12))
         UILib.gradient(Header, Color3.fromRGB(46, 18, 60), Color3.fromRGB(20, 14, 34), 0)
-        local StatusLED = UILib.new("Frame", {Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(10, 13), BackgroundColor3 = Theme.CyberCyan, BorderSizePixel = 0, ZIndex = 7}, Header)
-        UILib.corner(StatusLED, UDim.new(1, 0))
+        local StatusOrb = UILib.new("Frame", {
+            Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(8, 8),
+            BackgroundColor3 = Color3.fromRGB(6, 4, 14), BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 7,
+        }, Header)
+        UILib.corner(StatusOrb, UDim.new(1, 0))
+        local orbOuterStroke = UILib.stroke(StatusOrb, Color3.new(1, 1, 1), 1.35, 0.08)
+        local orbOuterGrad = UILib.new("UIGradient", {
+            Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 88, 214)),
+                ColorSequenceKeypoint.new(0.35, Color3.fromRGB(165, 118, 255)),
+                ColorSequenceKeypoint.new(0.70, Color3.fromRGB(92, 224, 255)),
+                ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 88, 214)),
+            }),
+            Rotation = 0,
+        }, orbOuterStroke)
+        local orbImg = UILib.new("ImageLabel", {
+            Size = UDim2.new(1.24, 0, 1.24, 0), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+            BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Crop, Image = "", Visible = false, ZIndex = 8,
+        }, StatusOrb)
+        local orbScale = UILib.new("UIScale", {Scale = 1}, orbImg)
+        local orbHasImg = false
+        pcall(function()
+            local getAsset = getcustomasset or getsynasset
+            if getAsset and isfile and isfile(YUI_ORB_FILE) then
+                orbImg.Image = getAsset(YUI_ORB_FILE)
+                orbImg.Visible = true
+                orbHasImg = true
+            end
+        end)
+        local orbInnerRing = UILib.new("Frame", {
+            Size = UDim2.new(0.64, 0, 0.64, 0), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+            BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 9,
+        }, StatusOrb)
+        UILib.corner(orbInnerRing, UDim.new(1, 0))
+        local orbInnerStroke = UILib.stroke(orbInnerRing, Color3.new(1, 1, 1), orbHasImg and 0.9 or 1.25, orbHasImg and 0.42 or 0.12)
+        local orbInnerGrad = UILib.new("UIGradient", {
+            Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0.00, Color3.fromRGB(110, 195, 255)),
+                ColorSequenceKeypoint.new(0.50, Color3.fromRGB(255, 115, 230)),
+                ColorSequenceKeypoint.new(1.00, Color3.fromRGB(110, 195, 255)),
+            }),
+            Rotation = 120,
+        }, orbInnerStroke)
+        local orbCore = UILib.new("Frame", {
+            Size = UDim2.new(0.28, 0, 0.28, 0), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+            BackgroundColor3 = Color3.fromRGB(255, 190, 248), BackgroundTransparency = orbHasImg and 0.72 or 0.16,
+            BorderSizePixel = 0, ZIndex = 10,
+        }, StatusOrb)
+        UILib.corner(orbCore, UDim.new(1, 0))
+        local StatusLED = {
+            img = orbImg, scale = orbScale, outerGrad = orbOuterGrad,
+            innerGrad = orbInnerGrad, core = orbCore, hasImg = orbHasImg,
+        }
 
         UILib.new("TextLabel", {
-            Size = UDim2.new(1, -145, 1, 0), Position = UDim2.fromOffset(23, 0), BackgroundTransparency = 1,
+            Size = UDim2.new(1, -152, 1, 0), Position = UDim2.fromOffset(30, 0), BackgroundTransparency = 1,
             Text = "🌸 Yui Hub  |  WELCOME " .. ((Player.DisplayName and Player.DisplayName ~= "") and Player.DisplayName or Player.Name), TextColor3 = Theme.Text, Font = Enum.Font.GothamBold, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 6,
         }, Header)
         UILib.new("TextLabel", {
