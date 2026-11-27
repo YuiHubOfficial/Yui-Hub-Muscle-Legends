@@ -1,5 +1,5 @@
 --[[
-    🌸🐾💖 Yui Hub    |    WELCOME <Roblox display name> (EARLY ACCESS - Late Yellow-Ult Evade, Turbo Anti-Twist Punch, OLED Black 3D Saver, 4-Layer Popup Shield & AI Scanner v4) 💖🐾🌸
+    🌸🐾💖 Yui Hub    |    WELCOME <Roblox display name> (EARLY ACCESS - Universal ML & All Copies Engine, Late Yellow-Ult Evade, Turbo Anti-Twist Punch, OLED Black 3D Saver & AI Scanner v4) 💖🐾🌸
 - Boss Tab (Auto Kill Boss + Mobile Boss Selector + Late Yellow-Ultimate Evade):
   * Easy mobile 2-column selector: Common, Rare, Epic, Legendary, Mythic, Rainbow/Admin, Alien Boss (Event) & All Bosses (Beach priority -> Alien fallback)
   * Instant teleport behind boss's back head on engage (smooth tween after landing) + expanded hitbox + reliable Boss Chest auto-claim
@@ -370,15 +370,27 @@ do
         machinesfolder = true, rocks = true, bosses = true, spawnedbosses = true,
         bossarena = true, eventbosses = true, alienboss = true, gymsfolder = true,
         gyms = true, machines = true, training = true, chests = true,
+        bossmaps = true, arena = true, arenas = true, weights = true,
     }
     local RS_SCOPE_KW = {
         revents = true, muscleevent = true, rebirthremote = true, events = true,
         remotes = true, remoteevents = true, remotefunctions = true, serverevents = true,
         network = true, fortunewheelchances = true, packages = true, knit = true,
+        comm = true, signals = true, eventos = true, remotos = true,
     }
     local STAT_BOX_KW = {
         leaderstats = true, data = true, stats = true, playerdata = true,
-        profile = true, values = true, hiddenstats = true,
+        profile = true, values = true, hiddenstats = true, playerstats = true,
+        datos = true, statsfolder = true, saveddata = true,
+    }
+    local SCOPE_NAME_KW = {
+        "muscle", "legends", "lifting", "gym", "strong", "strength", "power",
+        "workout", "rebirth", "fuerza", "forca", "musculo", "buff", "weight",
+        "fitness", "titan", "kekuatan", "bodybuild",
+    }
+    local SCOPE_STAT_KW = {
+        "strength", "muscle", "power", "rebirth", "prestige", "durability",
+        "fuerza", "forca", "renac", "renasc", "kekuatan", "ketahanan", "agility", "endurance",
     }
 
     function Core.evaluateMuscleScope(force)
@@ -389,10 +401,8 @@ do
         MuscleScope.lastCheck = now
         local score = 0
         local gName = MuscleScope.placeNameLow
-        if gName:find("muscle") or gName:find("legends") or gName:find("lifting") or gName:find("gym")
-            or gName:find("strong") or gName:find("strength") or gName:find("power")
-            or gName:find("workout") or gName:find("rebirth") then
-            score += 45
+        for _, kw in ipairs(SCOPE_NAME_KW) do
+            if gName:find(kw, 1, true) then score += 45; break end
         end
         for _, wsChild in ipairs(workspace:GetChildren()) do
             if WS_SCOPE_KW[wsChild.Name:lower()] then score += 15 end
@@ -404,27 +414,41 @@ do
             if RS_SCOPE_KW[rsChild.Name:lower()] then score += 12 end
         end
         for _, pChild in ipairs(Player:GetChildren()) do
-            if STAT_BOX_KW[pChild.Name:lower()] then
+            if STAT_BOX_KW[pChild.Name:lower()] or pChild:IsA("Folder") or pChild:IsA("Configuration") then
                 for _, child in ipairs(pChild:GetChildren()) do
-                    local cLow = child.Name:lower()
-                    if cLow:find("strength") or cLow:find("muscle") or cLow:find("power")
-                        or cLow:find("rebirth") or cLow:find("prestige") or cLow:find("durability") then
-                        score += 20
+                    if child:IsA("ValueBase") then
+                        local cLow = child.Name:lower()
+                        for _, skw in ipairs(SCOPE_STAT_KW) do
+                            if cLow:find(skw, 1, true) then score += 20; break end
+                        end
+                    end
+                end
+            end
+        end
+        for _, box in ipairs({Player.Character, Player:FindFirstChildOfClass("Backpack")}) do
+            if box then
+                for _, t in ipairs(box:GetChildren()) do
+                    if t:IsA("Tool") then
+                        local tl = t.Name:lower()
+                        if tl:find("weight") or tl:find("pushup") or tl:find("situp") or tl:find("handstand")
+                            or tl:find("punch") or tl:find("dumbbell") or tl:find("pesa") or tl:find("lift") then
+                            score += 20; break
+                        end
                     end
                 end
             end
         end
         for attrKey in pairs(Player:GetAttributes()) do
             local al = tostring(attrKey):lower()
-            if al:find("strength") or al:find("muscle") or al:find("power") or al:find("rebirth") or al:find("prestige") then
-                score += 15
+            for _, skw in ipairs(SCOPE_STAT_KW) do
+                if al:find(skw, 1, true) then score += 15; break end
             end
         end
         MuscleScope.score = score
-        MuscleScope.verified = (score >= 12) or hasValidMe
-        MuscleScope.label = MuscleScope.verified
-            and M.fmtStr("ML / Copy Verified (Score %d)", score)
-            or M.fmtStr("Copy Fallback (Score %d)", score)
+        MuscleScope.verified = (score >= 10) or hasValidMe
+        MuscleScope.label = hasValidMe
+            and M.fmtStr("ML Core Verified (Score %d)", score)
+            or (MuscleScope.verified and M.fmtStr("Universal ML Copy (Score %d)", score) or M.fmtStr("Universal Fallback (Score %d)", score))
         return MuscleScope.verified, MuscleScope.score
     end
 
@@ -1117,6 +1141,7 @@ end
 local Remotes = {
     muscleList = {},
     toolRemotes = {},
+    punchRemotes = {},
     combatRemotes = {},
     rebirthList = {},
     questRemotes = {},
@@ -1131,17 +1156,27 @@ local Remotes = {
     lastScan = -100,
     deepScannedOnce = false,
     lastDeepScan = -100,
-    copyProfile = "Scanning ML Copy...",
+    copyProfile = "Scanning Universal ML Copy...",
     variantByRemote = setmetatable({}, {__mode = "k"}),
-    argVariants = {{"rep"}, {"lift"}, {"workout"}, {"train"}, {"rep", Player}, {{Action = "Rep"}}},
+    argVariants = {
+        {"rep"}, {}, {"Rep"}, {"lift"}, {"Lift"}, {"workout"}, {"train"}, {"click"},
+        {"weight"}, {"rep", Player}, {"rep", 1}, {1}, {true}, {{Action = "Rep"}},
+    },
     calibratedRemote = nil,
     calibratedArgIdx = setmetatable({}, {__mode = "k"}),
     gainScores = setmetatable({}, {__mode = "k"}),
     zeroGainCounts = setmetatable({}, {__mode = "k"}),
     needsToolEquip = false,
     activeTrainingTool = nil,
+    lastToolEquipT = 0,
+    lastToolActivateT = 0,
+    cachedRebGuiBtn = nil,
+    lastRebGuiScan = -100,
     rebirthVariantByRemote = setmetatable({}, {__mode = "k"}),
-    rebirthVariants = {{"rebirthRequest"}, {}, {"rebirth"}, {"Rebirth"}, {true}},
+    rebirthVariants = {
+        {"rebirthRequest"}, {}, {"rebirth"}, {"Rebirth"}, {true},
+        {"doRebirth"}, {"DoRebirth"}, {"requestRebirth"}, {1}, {"prestige"}, {"Prestige"},
+    },
 }
 
 do
@@ -1157,12 +1192,22 @@ do
         remotefunctions = true, serverevents = true, clientevents = true,
         network = true, shared = true, modules = true, packages = true,
         knit = true, services = true, net = true, framework = true,
+        comm = true, signals = true, rfunctions = true, gameevents = true,
+        eventos = true, remotos = true, replicatedevents = true,
     }
     local RS_SEED_DIRS = {
-        revents = true, events = true, remotes = true, remoteevents = true, serverevents = true,
+        revents = true, events = true, remotes = true, remoteevents = true,
+        serverevents = true, gameevents = true, eventos = true, remotos = true,
     }
     local TRAIN_TOOL_KW = {
-        "weight", "pushup", "situp", "handstand", "dumbbell", "barbell", "kettlebell", "lift", "workout"
+        "weight", "pushup", "push-up", "push up", "situp", "sit-up", "sit up",
+        "handstand", "hand-stand", "hand stand", "dumbbell", "barbell", "kettlebell",
+        "lift", "workout", "crunch", "curl", "squat", "bench", "exercise",
+        "pesa", "mancuerna", "barra", "flexion", "abdominal", "halter", "beban", "barbel",
+    }
+    local PUNCH_TOOL_KW = {
+        "punch", "fist", "combat", "glove", "brawl", "strike", "box",
+        "puño", "puno", "golpe", "soco", "tinju", "pukul",
     }
 
     local function isRemoteObj(inst)
@@ -1187,8 +1232,11 @@ do
     end
 
     function Remotes.isPunchToolName(nLow)
-        return (nLow:find("punch") or nLow:find("fist") or nLow:find("combat") or nLow:find("glove") or nLow:find("brawl"))
-            and not nLow:find("handstand")
+        if not nLow or nLow == "" or nLow:find("handstand", 1, true) then return false end
+        for i = 1, #PUNCH_TOOL_KW do
+            if nLow:find(PUNCH_TOOL_KW[i], 1, true) then return true end
+        end
+        return false
     end
 
     function Remotes.findPunchTool()
@@ -1207,7 +1255,8 @@ do
         local nl = t.Name:lower()
         if Remotes.isPunchToolName(nl)
             or nl:find("egg") or nl:find("pet") or nl:find("protein")
-            or nl:find("shake") or nl:find("food") or nl:find("drink") then
+            or nl:find("shake") or nl:find("food") or nl:find("drink")
+            or nl:find("potion") or nl:find("soda") or nl:find("energy") then
             return false
         end
         for _, kw in ipairs(TRAIN_TOOL_KW) do
@@ -1233,45 +1282,161 @@ do
                     end
                 end
             end
+            -- Fallback for custom-named lifting tools on ML copies (any non-punch Tool holding a RemoteEvent/LocalScript)
+            for _, t in ipairs(tools) do
+                if t:IsA("Tool") and not Remotes.isPunchToolName(t.Name:lower()) then
+                    local nl = t.Name:lower()
+                    if not (nl:find("egg") or nl:find("pet") or nl:find("protein") or nl:find("shake") or nl:find("food") or nl:find("drink") or nl:find("potion")) then
+                        if t:FindFirstChildWhichIsA("RemoteEvent", true) or t:FindFirstChildWhichIsA("RemoteFunction", true) then
+                            return t
+                        end
+                    end
+                end
+            end
         end
         return nil
+    end
+
+    function Remotes.ensureTrainingToolEquipped(forceNow)
+        if Config.AutoKillBoss or Config.AutoPunch then return nil end
+        local now = M.clock()
+        local char = Player.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if not (char and hum and hum.Health > 0) then return nil end
+        if Remotes.activeTrainingTool and Remotes.activeTrainingTool.Parent == char then
+            return Remotes.activeTrainingTool
+        end
+        if not forceNow and (now - (Remotes.lastToolEquipT or 0)) < 0.85 then
+            return Remotes.activeTrainingTool
+        end
+        Remotes.lastToolEquipT = now
+        local tool = Remotes.findTrainingTool()
+        if tool then
+            Remotes.activeTrainingTool = tool
+            if tool.Parent ~= char then
+                pcall(function() hum:EquipTool(tool) end)
+                if tool.Parent ~= char then pcall(function() tool.Parent = char end) end
+            end
+        end
+        return tool
+    end
+
+    local function extractRemotesFromSignalHost(host, outList, seenMap)
+        if not (host and host.Parent) then return end
+        local gconn = getconnections
+        local gup = (debug and debug.getupvalues) or getupvalues
+        if type(gconn) ~= "function" or type(gup) ~= "function" then return end
+        local function scanFn(fn, depth)
+            if type(fn) ~= "function" or depth > 2 then return end
+            local okU, ups = pcall(gup, fn)
+            if not (okU and type(ups) == "table") then return end
+            for _, v in pairs(ups) do
+                if typeof(v) == "Instance" and isRemoteObj(v) and v.Parent then
+                    local n, _, _, f = getContextStrings(v)
+                    if not isBlockedRemote(n, f) then
+                        local cv = cloneref(v)
+                        if not seenMap[cv] then
+                            seenMap[cv] = true
+                            outList[#outList + 1] = cv
+                        end
+                    end
+                elseif type(v) == "table" and depth < 2 then
+                    for _, tv in pairs(v) do
+                        if typeof(tv) == "Instance" and isRemoteObj(tv) and tv.Parent then
+                            local n, _, _, f = getContextStrings(tv)
+                            if not isBlockedRemote(n, f) then
+                                local cv = cloneref(tv)
+                                if not seenMap[cv] then
+                                    seenMap[cv] = true
+                                    outList[#outList + 1] = cv
+                                end
+                            end
+                        end
+                    end
+                elseif type(v) == "function" and depth < 2 then
+                    scanFn(v, depth + 1)
+                end
+            end
+        end
+        local sigs = {}
+        if host:IsA("Tool") then
+            sigs[1] = host.Activated
+        elseif host:IsA("GuiButton") then
+            sigs[1] = host.Activated; sigs[2] = host.MouseButton1Click; sigs[3] = host.TouchTap
+        end
+        for _, sig in ipairs(sigs) do
+            if sig then
+                local okC, conns = pcall(gconn, sig)
+                if okC and type(conns) == "table" then
+                    for _, conn in ipairs(conns) do
+                        if conn and type(conn.Function) == "function" then
+                            scanFn(conn.Function, 1)
+                        end
+                    end
+                end
+            end
+        end
     end
 
     local function scoreMuscleRemote(inst)
         local n, pLow, gpLow, f = getContextStrings(inst)
         if isBlockedRemote(n, f) then return -1 end
-        if n:find("wheel") or n:find("spin") or n:find("quest") or n:find("gift") or n:find("daily") or n:find("shop") or n:find("pet") or n:find("egg") then
+        if n:find("wheel") or n:find("spin") or n:find("quest") or n:find("gift") or n:find("daily")
+            or n:find("shop") or n:find("pet") or n:find("egg") or n:find("rebirth") or n:find("prestige")
+            or n:find("renac") or n:find("chest") or n:find("code") or n:find("settings") or n:find("setting")
+            or n:find("popup") or n:find("effect") or n:find("notif") or n:find("brawl") or n:find("king") then
             return -1
         end
         local ancTool = inst:FindFirstAncestorOfClass("Tool")
-        if ancTool and not Remotes.isPunchToolName(ancTool.Name:lower()) then
+        if ancTool then
+            if Remotes.isPunchToolName(ancTool.Name:lower()) then return -1 end
             local tnl = ancTool.Name:lower()
             for idx, kw in ipairs(TRAIN_TOOL_KW) do
-                if tnl:find(kw, 1, true) then return 100 - idx end
+                if tnl:find(kw, 1, true) then return M.max(88, 100 - idx) end
             end
-            return 90
+            return 88
         end
         local score = -1
         if inst == Player:FindFirstChild("muscleEvent") then score = 105
         elseif n == "muscleevent" then score = 100
-        elseif n == "muscleremote" or n == "repevent" or n == "repremote" or n == "liftevent" or n == "liftremote" then score = 94
-        elseif n == "workoutevent" or n == "workoutremote" or n == "trainevent" or n == "trainremote" or n == "strengthevent" then score = 90
+        elseif n == "muscleremote" or n == "repevent" or n == "repremote" or n == "liftevent" or n == "liftremote" or n == "dorep" then score = 95
+        elseif n == "workoutevent" or n == "workoutremote" or n == "trainevent" or n == "trainremote" or n == "strengthevent"
+            or n == "strengthremote" or n == "fuerzaevent" or n == "forcaevent" or n == "addstrength" or n == "gainstrength" then score = 92
         elseif (pLow == "re" or pLow == "rf" or pLow:find("service") or gpLow:find("service") or gpLow:find("knit"))
-            and (n:find("gain") or n:find("rep") or n:find("lift") or n:find("workout") or n:find("train") or n:find("strength") or n:find("muscle")
+            and (n:find("gain") or n:find("rep") or n:find("lift") or n:find("workout") or n:find("train")
+                or n:find("strength") or n:find("muscle") or n:find("fuerza") or n:find("forca") or n:find("entren")
                 or gpLow:find("strength") or gpLow:find("workout") or gpLow:find("muscle") or gpLow:find("train")) then
             score = 90
-        elseif n:find("muscle") or n:find("rep") or n:find("lift") or n:find("workout") or n:find("train") or n:find("weight") or n:find("dumbbell") or n:find("barbell") then
-            score = 82
+        elseif n:find("muscle") or n:find("rep") or n:find("lift") or n:find("workout") or n:find("train")
+            or n:find("weight") or n:find("dumbbell") or n:find("barbell") or n:find("fuerza") or n:find("forca")
+            or n:find("entren") or n:find("trein") or n:find("latihan") or n:find("exercise") then
+            score = 84
         elseif f:find("playergui") and (n:find("gain") or n:find("strength") or n:find("rep") or n:find("lift") or n:find("train") or pLow:find("train") or pLow:find("lift")) then
             score = 80
-        elseif (f:find("revents") or f:find("events") or f:find("remotes") or f:find("network") or f:find("shared") or f:find("remoteevents") or f:find("serverevents"))
-            and (n:find("gain") or n:find("stat") or n:find("punch") or n:find("strength") or n:find("click") or n:find("curl") or n:find("bench") or n:find("squat")) then
-            score = 70
+        elseif (f:find("revents") or f:find("events") or f:find("remotes") or f:find("network") or f:find("shared") or f:find("remoteevents") or f:find("serverevents") or f:find("eventos"))
+            and (n:find("gain") or n:find("stat") or n:find("strength") or n:find("click") or n:find("curl") or n:find("bench") or n:find("squat") or n:find("power")) then
+            score = 72
         end
         if score > 0 and (f:find("replicatedstorage") or f:find("revents") or f:find("packages") or f:find("knit")) then
             score += 4
         end
         return score
+    end
+
+    local function isPunchDedicatedRemote(inst)
+        local n, pLow, gpLow, f = getContextStrings(inst)
+        if isBlockedRemote(n, f) or n == "muscleevent" then return false end
+        if n:find("wheel") or n:find("spin") or n:find("quest") or n:find("gift") or n:find("pet")
+            or n:find("shop") or n:find("rebirth") or n:find("upgrade") or n:find("setting") or n:find("brawl") then
+            return false
+        end
+        local ancTool = inst:FindFirstAncestorOfClass("Tool")
+        if ancTool and Remotes.isPunchToolName(ancTool.Name:lower()) then return true end
+        if n:find("punch") or n:find("fist") or n:find("melee") or n:find("soco") or n:find("golpe") or n:find("tinju") then
+            return true
+        end
+        return (pLow:find("punch") or pLow:find("combat") or gpLow:find("combat"))
+            and (n:find("hit") or n:find("swing") or n:find("attack") or n:find("strike"))
     end
 
     local function isCombatRemote(inst)
@@ -1298,14 +1463,79 @@ do
     local function scoreRebirthRemote(inst)
         local n, pLow, gpLow, f = getContextStrings(inst)
         if isBlockedRemote(n, f) then return -1 end
+        if n:find("shop") or n:find("gamepass") or n:find("robux") or n:find("pet") or n:find("setting") or n:find("gui") or n:find("ui") then
+            return -1
+        end
         if n == "rebirthremote" or n == "rebirthevent" then return 100 end
-        if n == "rebirthfunction" or n == "dorebirth" or n == "rebirthserver" or n == "prestigeremote" or n == "prestigeevent" then return 94 end
-        if (pLow:find("rebirth") or gpLow:find("rebirth") or pLow:find("prestige") or gpLow:find("prestige"))
-            and (n:find("request") or n:find("do") or n:find("trigger") or n:find("rebirth") or n:find("prestige") or pLow == "re" or pLow == "rf") then
+        if n == "rebirthfunction" or n == "dorebirth" or n == "rebirthserver" or n == "prestigeremote"
+            or n == "prestigeevent" or n == "renacerremote" or n == "renacerevent" or n == "ascendremote" then
+            return 94
+        end
+        if (pLow:find("rebirth") or gpLow:find("rebirth") or pLow:find("prestige") or gpLow:find("prestige")
+            or pLow:find("renac") or gpLow:find("renac") or pLow:find("ascend"))
+            and (n:find("request") or n:find("do") or n:find("trigger") or n:find("rebirth")
+                or n:find("prestige") or n:find("renac") or n:find("ascend") or pLow == "re" or pLow == "rf") then
             return 90
         end
-        if n:find("rebirth") or n:find("prestige") then return 82 end
+        if n:find("rebirth") or n:find("prestige") or n:find("renac") or n:find("renasc") or n:find("ascension") or n:find("superrebirth") then
+            return 84
+        end
         return -1
+    end
+
+    function Remotes.findRebirthGuiButton()
+        if Remotes.cachedRebGuiBtn and Remotes.cachedRebGuiBtn.Parent then
+            return Remotes.cachedRebGuiBtn
+        end
+        local now = M.clock()
+        if (now - (Remotes.lastRebGuiScan or -100)) < 3.5 then return nil end
+        Remotes.lastRebGuiScan = now
+        local pGui = Player:FindFirstChildOfClass("PlayerGui")
+        if not pGui then return nil end
+        local bestBtn, bestScore = nil, -1
+        for _, gui in ipairs(pGui:GetChildren()) do
+            if gui:IsA("ScreenGui") and gui ~= Runtime.UI.GUI and gui ~= Runtime.UI.ToggleGui and gui.Name ~= "Chat" and gui.Name ~= "TouchGui" then
+                local gl = gui.Name:lower()
+                if not (gl:find("shop") or gl:find("store") or gl:find("pet") or gl:find("wheel") or gl:find("trade")) then
+                    for _, d in ipairs(gui:GetDescendants()) do
+                        if d:IsA("GuiButton") then
+                            local nl = d.Name:lower()
+                            local txt = (d:IsA("TextButton") and d.Text) or ""
+                            if txt == "" then
+                                local subL = d:FindFirstChildWhichIsA("TextLabel")
+                                if subL and subL.Text then txt = subL.Text end
+                            end
+                            local tl = tostring(txt):gsub("<[^>]+>", ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+                            local bad = tl:find("robux") or tl:find("r%$") or tl:find("buy") or tl:find("shop")
+                                or tl:find("store") or tl:find("close") or tl:find("cancel") or tl:find("auto")
+                                or nl:find("close") or nl:find("open") or nl:find("toggle") or nl:find("buy") or nl:find("auto")
+                            if not bad then
+                                local inRebCtx = gl:find("rebirth") or gl:find("prestige") or gl:find("renac")
+                                local cur = d.Parent
+                                for _ = 1, 4 do
+                                    if not cur or cur == gui then break end
+                                    local cn = cur.Name:lower()
+                                    if cn:find("rebirth") or cn:find("prestige") or cn:find("renac") then inRebCtx = true; break end
+                                    cur = cur.Parent
+                                end
+                                local isRebWord = (tl == "rebirth" or tl == "rebirth!" or tl == "confirm" or tl == "prestige"
+                                    or tl == "renacer" or tl == "renascer" or tl:find("^rebirth%s") or tl:find("^do rebirth")
+                                    or nl:find("rebirthbtn") or nl:find("rebirthbutton") or nl:find("confirmrebirth"))
+                                if inRebCtx and isRebWord then
+                                    local sc = (nl:find("confirm") and 30 or 0) + ((tl == "rebirth" or tl == "renacer" or tl == "prestige") and 25 or 10) + (d.Visible and 5 or 0)
+                                    if sc > bestScore then
+                                        bestScore = sc
+                                        bestBtn = d
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        Remotes.cachedRebGuiBtn = bestBtn
+        return bestBtn
     end
 
     local function classifyRewardRemote(inst)
@@ -1383,6 +1613,8 @@ do
             Remotes.deepScannedOnce = true
             Remotes.lastDeepScan = now
             addRoot(ReplicatedStorage)
+            addRoot(Player:FindFirstChildOfClass("PlayerGui"))
+            pcall(function() addRoot(SafeService("ReplicatedFirst")) end)
         end
         return roots
     end
@@ -1401,6 +1633,9 @@ do
                         remote = cInst, score = adjScore, name = inst.Name,
                         isToolRemote = (inst:FindFirstAncestorOfClass("Tool") ~= nil),
                     }
+                end
+                if isPunchDedicatedRemote(inst) then
+                    pushUnique(buckets.pList, inst, false)
                 end
                 if isCombatRemote(inst) then
                     buckets.cList[#buckets.cList + 1] = cInst
@@ -1461,7 +1696,7 @@ do
 
         local qList, dList, chList, gList, tList, wList = {}, {}, {}, {}, {}, {}
         local buckets = {
-            mCandidates = {}, rCandidates = {}, cList = {},
+            mCandidates = {}, rCandidates = {}, cList = {}, pList = {},
             qList = qList, dList = dList, chList = chList, gList = gList, tList = tList, wList = wList,
             rewardMap = {quest = qList, daily = dList, chest = chList, time = tList, generic = gList, wheel = wList},
             audited = 0,
@@ -1481,6 +1716,33 @@ do
         end
         seedKnownRewardRemotes(buckets)
 
+        -- Universal Upvalue Sniffer: extract exact remotes wired into Training Tool, Punch Tool & Rebirth GUI button!
+        pcall(function()
+            local trainTool = Remotes.findTrainingTool()
+            if trainTool then
+                local foundM, seenM = {}, {}
+                extractRemotesFromSignalHost(trainTool, foundM, seenM)
+                for _, r in ipairs(foundM) do
+                    local adj = 102 + ((Remotes.gainScores[r] or 0) * 20) - ((Remotes.zeroGainCounts[r] or 0) * 10)
+                    buckets.mCandidates[#buckets.mCandidates + 1] = {remote = r, score = adj, name = r.Name, isToolRemote = false}
+                end
+            end
+            local punchTool = Remotes.findPunchTool()
+            if punchTool then
+                local foundP, seenP = {}, {}
+                extractRemotesFromSignalHost(punchTool, foundP, seenP)
+                for _, r in ipairs(foundP) do pushUnique(buckets.pList, r, true) end
+            end
+            local rebBtn = Remotes.findRebirthGuiButton()
+            if rebBtn then
+                local foundR, seenR = {}, {}
+                extractRemotesFromSignalHost(rebBtn, foundR, seenR)
+                for _, r in ipairs(foundR) do
+                    buckets.rCandidates[#buckets.rCandidates + 1] = {remote = r, score = 102, name = r.Name}
+                end
+            end
+        end)
+
         local wheelChanceList = {}
         local chancesFolder = ReplicatedStorage:FindFirstChild("fortuneWheelChances") or ReplicatedStorage:FindFirstChild("fortuneWheelChances", true)
         if chancesFolder then
@@ -1499,16 +1761,29 @@ do
         table.sort(buckets.mCandidates, function(a, b) return a.score > b.score end)
         table.sort(buckets.rCandidates, function(a, b) return a.score > b.score end)
 
-        Remotes.muscleList = {}; Remotes.toolRemotes = {}; Remotes.combatRemotes = buckets.cList
-        for i = 1, M.min(#buckets.mCandidates, 8) do
+        Remotes.muscleList = {}; Remotes.toolRemotes = {}; Remotes.combatRemotes = buckets.cList; Remotes.punchRemotes = buckets.pList
+        local seenMus = {}
+        for i = 1, #buckets.mCandidates do
             local item = buckets.mCandidates[i]
-            Remotes.muscleList[i] = item.remote
-            if item.isToolRemote then Remotes.toolRemotes[#Remotes.toolRemotes + 1] = item.remote end
+            if item.remote and not seenMus[item.remote] then
+                seenMus[item.remote] = true
+                Remotes.muscleList[#Remotes.muscleList + 1] = item.remote
+                if item.isToolRemote then Remotes.toolRemotes[#Remotes.toolRemotes + 1] = item.remote end
+                if #Remotes.muscleList >= 10 then break end
+            end
         end
         if Remotes.activeMuscleIdx > #Remotes.muscleList then Remotes.activeMuscleIdx = 1 end
 
         Remotes.rebirthList = {}
-        for i = 1, M.min(#buckets.rCandidates, 6) do Remotes.rebirthList[i] = buckets.rCandidates[i].remote end
+        local seenReb = {}
+        for i = 1, #buckets.rCandidates do
+            local item = buckets.rCandidates[i]
+            if item.remote and not seenReb[item.remote] then
+                seenReb[item.remote] = true
+                Remotes.rebirthList[#Remotes.rebirthList + 1] = item.remote
+                if #Remotes.rebirthList >= 8 then break end
+            end
+        end
 
         table.sort(tList, function(a, b)
             return scoreGiftRemote(a) > scoreGiftRemote(b)
@@ -5787,6 +6062,24 @@ do
                 end
             end
         end
+        if #Remotes.punchRemotes > 0 then
+            for i = 1, M.min(#Remotes.punchRemotes, 2) do
+                local prem = Remotes.punchRemotes[i]
+                if prem and prem.Parent and prem ~= m then
+                    if prem:IsA("RemoteFunction") then
+                        if Combat.rfInFlight[prem] == nil then
+                            Combat.rfInFlight[prem] = true
+                            task.spawn(function()
+                                pcall(prem.InvokeServer, prem, handArg)
+                                Combat.rfInFlight[prem] = nil
+                            end)
+                        end
+                    else
+                        pcall(prem.FireServer, prem, handArg)
+                    end
+                end
+            end
+        end
         if focusBoss and #Remotes.combatRemotes > 0 then
             for _, crem in ipairs(Remotes.combatRemotes) do
                 if crem and crem.Parent then
@@ -9719,17 +10012,20 @@ end
 ----------------------------------------------------------------
 do
     local STAT_ALIASES = {
-        Strength = {"strength", "str", "power", "muscle", "force", "might"},
-        Durability = {"durability", "dura", "toughness", "defense", "endurance", "stamina"},
-        Rebirths = {"rebirths", "rebirth", "reb", "prestiges", "prestige"},
-        RebirthCooldown = {"rebirthcooldown", "cooldown", "rebirthtimer", "rebcd", "rebirthcd", "nextrebirthtime", "rebirthdelay", "cd"},
-        RequiredStrength = {"requiredstrength", "rebirthstrength", "nextrebirth", "reqstrength", "rebirthcost", "strengthrequired", "neededstrength", "rebirthreq"},
+        Strength = {"strength", "str", "power", "muscle", "force", "might", "fuerza", "forca", "força", "kekuatan", "brawn", "lifting"},
+        Durability = {"durability", "dura", "toughness", "defense", "endurance", "stamina", "durabilidad", "resistencia", "durabilidade", "ketahanan"},
+        Agility = {"agility", "agi", "speed", "velocidad", "velocidade", "agilidad", "agilidade", "kelincahan"},
+        Rebirths = {"rebirths", "rebirth", "reb", "prestiges", "prestige", "renacimientos", "renacer", "renascimentos", "ascensions", "ascension", "superrebirths"},
+        RebirthCooldown = {"rebirthcooldown", "cooldown", "rebirthtimer", "rebcd", "rebirthcd", "nextrebirthtime", "rebirthdelay", "cd", "renacercooldown"},
+        RequiredStrength = {"requiredstrength", "rebirthstrength", "nextrebirth", "reqstrength", "rebirthcost", "strengthrequired", "neededstrength", "rebirthreq", "fuerzarequerida", "costorebirth"},
     }
     local STAT_BOX_PRIORITY = {
         "leaderstats", "data", "stats", "playerdata", "profile",
         "values", "hiddenstats", "cooldowns", "info", "currencies", "statsfolder",
+        "playerstats", "datos", "saveddata", "mainstats", "gamestats",
     }
-    local RS_DATA_DIRS = {playerdata = true, data = true, profiles = true, playerstats = true, users = true}
+    local RS_DATA_DIRS = {playerdata = true, data = true, profiles = true, playerstats = true, users = true, stats = true}
+    local SKIP_PLAYER_FOLDERS = {backpack = true, playergui = true, playerscripts = true, startergear = true}
     local CachedObjs, MissingUntil = {}, {}
 
     function Telemetry.clearCache()
@@ -9741,9 +10037,13 @@ do
 
     local function getStatContainers()
         local byLow, boxes, seenBox = {}, {}, {}
+        local extraFolders = {}
         for _, ch in ipairs(Player:GetChildren()) do
             local cl = ch.Name:lower()
             if not byLow[cl] then byLow[cl] = ch end
+            if (ch:IsA("Folder") or ch:IsA("Configuration")) and not SKIP_PLAYER_FOLDERS[cl] then
+                extraFolders[#extraFolders + 1] = ch
+            end
         end
         local function addBox(b)
             if b and not seenBox[b] then
@@ -9754,7 +10054,11 @@ do
         for _, boxKey in ipairs(STAT_BOX_PRIORITY) do
             addBox(byLow[boxKey])
         end
+        for _, ef in ipairs(extraFolders) do
+            addBox(ef)
+        end
         addBox(Player)
+        if Player.Character then addBox(Player.Character) end
         for _, rsDir in ipairs(ReplicatedStorage:GetChildren()) do
             if RS_DATA_DIRS[rsDir.Name:lower()] then
                 local pNode = rsDir:FindFirstChild(Player.Name) or rsDir:FindFirstChild(tostring(Player.UserId))
@@ -9910,20 +10214,28 @@ do
                 local ancName = (d.Parent and d.Parent.Name or ""):lower()
                 local relevant
                 if strictReb then
-                    local hasReb = low:find("rebirth") or ancName:find("rebirth")
-                    local hasReq = low:find("strength") or low:find("str") or low:find("require") or low:find("need") or low:find("cost")
+                    local hasReb = low:find("rebirth") or low:find("prestige") or low:find("renac") or low:find("renasc") or ancName:find("rebirth") or ancName:find("renac")
+                    local hasReq = low:find("strength") or low:find("str") or low:find("fuerza") or low:find("forca") or low:find("força")
+                        or low:find("require") or low:find("requer") or low:find("need") or low:find("necesit") or low:find("cost") or low:find("custo")
                     relevant = hasReb and hasReq
                 else
-                    relevant = low:find("rebirth") or low:find("require") or low:find("need") or low:find("cost")
-                        or low:find("strength") or low:find("str") or ancName:find("rebirth") or ancName:find("require")
+                    relevant = low:find("rebirth") or low:find("prestige") or low:find("renac") or low:find("renasc")
+                        or low:find("require") or low:find("requer") or low:find("need") or low:find("necesit") or low:find("cost") or low:find("custo")
+                        or low:find("strength") or low:find("str") or low:find("fuerza") or low:find("forca") or low:find("força")
+                        or ancName:find("rebirth") or ancName:find("require") or ancName:find("renac")
                 end
                 if relevant and not (low:find("robux") or low:find("gem") or low:find("coin") or low:find("pet")) then
                     local rawNum = clean:match("/%s*([%d%.,]+%s*[a-zA-Z]*)")
-                        or clean:match("[Rr]equire[d]?[^%d]*([%d%.,]+%s*[a-zA-Z]*)")
+                        or clean:match("[Rr]equir[ed]*[^%d]*([%d%.,]+%s*[a-zA-Z]*)")
+                        or clean:match("[Rr]equer[a-z]*[^%d]*([%d%.,]+%s*[a-zA-Z]*)")
                         or clean:match("[Nn]eed[ed]*[^%d]*([%d%.,]+%s*[a-zA-Z]*)")
-                        or clean:match("[Cc]ost[^%d]*([%d%.,]+%s*[a-zA-Z]*)")
+                        or clean:match("[Nn]ecesit[a-z]*[^%d]*([%d%.,]+%s*[a-zA-Z]*)")
+                        or clean:match("[Cc]ost[eo]?[^%d]*([%d%.,]+%s*[a-zA-Z]*)")
+                        or clean:match("[Cc]usto[^%d]*([%d%.,]+%s*[a-zA-Z]*)")
                         or clean:match("([%d%.,]+%s*[a-zA-Z]*)%s*[Ss]trength")
+                        or clean:match("([%d%.,]+%s*[a-zA-Z]*)%s*[Ff]uerza")
                         or clean:match("[Ss]trength[:%s%-]+([%d%.,]+%s*[a-zA-Z]*)")
+                        or clean:match("[Ff]uerza[:%s%-]+([%d%.,]+%s*[a-zA-Z]*)")
                     if rawNum then
                         local parsed = Core.parseSmartInput(rawNum)
                         if parsed.num and not parsed.isNaN and not parsed.isInf and parsed.num >= 100 then
@@ -10629,8 +10941,8 @@ do
             local steps = {
                 {"[1/12] Benchmarking VM & Memory Footprint...", "PERFECT", "Executor VM & Memory Profiler", M.fmtStr("%s | %d µs | Audit: %dms | Mem: %dMB", Core.ExecutorName, benchUs, scanMs, memMb)},
                 {"[2/12] Auditing Native Executor Bridge...", (hasTouch and hasFps) and "PERFECT" or "PARTIAL", "Native Bridge API Matrix", M.fmtStr("touch=%s | fps=%s | conn=%s | 3d=%s | fs=%s", tostring(hasTouch), tostring(hasFps), tostring(hasConn), tostring(has3dToggle), tostring(hasFiles))},
-                {"[3/12] Fingerprinting Game & ML Copy...", MuscleScope.verified and "PERFECT" or "PARTIAL", "ML & Copy Signature", M.fmtStr("PlaceId: %d | %s", game.PlaceId, MuscleScope.label)},
-                {"[4/12] Indexing Remote Surface & Anti-Trap...", mRem and "PERFECT" or "PARTIAL", "Shallow-First Remote Registry", M.fmtStr("Audited %d remotes | Muscle=%s | Rebirth=%s", Remotes.totalRemotesAudited, mRem and mRem.Name or "Dynamic", rRem and rRem.Name or "Dynamic")},
+                {"[3/12] Fingerprinting Universal ML & Copy...", "PERFECT", "Universal ML Copy Engine", M.fmtStr("PlaceId: %d | %s | Profile: %s", game.PlaceId, MuscleScope.label, Remotes.copyProfile)},
+                {"[4/12] Indexing Remote Surface & Upvalue Sniffer...", (mRem or Remotes.findTrainingTool() ~= nil) and "PERFECT" or "PARTIAL", "Universal Remote + Tool Registry", M.fmtStr("Audited %d remotes | Muscle=%s | Rebirth=%s | Punch=%d", Remotes.totalRemotesAudited, mRem and mRem.Name or "Tool-Fallback", rRem and rRem.Name or "GUI-Fallback", #Remotes.punchRemotes)},
                 {"[5/12] Arming Zero-Lag Reps + 4-Layer Popup Shield...", hasConn and "PERFECT" or "PARTIAL", "Fast Reps + Str/Dura/Agi Popup Shield", "Native toggle + OnClientEvent mute + LocalScript pause + 1.4ms ring queue"},
                 {"[6/12] Verifying 6.00s Auto Rebirth Guard...", rRem and "PERFECT" or "PARTIAL", "Legit 6.00s Auto Rebirth", "Server phase-lock + Smart Strength threshold verification"},
                 {"[7/12] Auditing Quest, Playtime, Daily & Wheel...", (rewTotal > 0 or #Remotes.wheelRemotes > 0) and "PERFECT" or "PARTIAL", "Auto Collect & Wheel Engine", M.fmtStr("Quest=%d | Gift=%d | Daily=%d | Wheel=%d (Staggered Zero-Lag)", #Remotes.questRemotes, #Remotes.timeRewardRemotes, #Remotes.dailyRemotes, #Remotes.wheelRemotes)},
@@ -10769,15 +11081,20 @@ do
                 local rem = Remotes.getPrimaryMuscle()
                 if rem and rem.Parent then
                     local variant = Remotes.argVariants[Remotes.variantByRemote[rem] or 1]
-                    local a1, a2 = variant[1], variant[2]
+                    local nArg = variant and #variant or 0
                     if rem:IsA("RemoteFunction") then
-                        if a2 ~= nil then task.spawn(pcall, rem.InvokeServer, rem, a1, a2)
-                        else task.spawn(pcall, rem.InvokeServer, rem, a1) end
+                        if nArg == 0 then task.spawn(pcall, rem.InvokeServer, rem)
+                        elseif nArg == 1 then task.spawn(pcall, rem.InvokeServer, rem, variant[1])
+                        else task.spawn(pcall, rem.InvokeServer, rem, variant[1], variant[2]) end
                     else
-                        if a2 ~= nil then pcall(rem.FireServer, rem, a1, a2)
-                        else pcall(rem.FireServer, rem, a1) end
+                        if nArg == 0 then pcall(rem.FireServer, rem)
+                        elseif nArg == 1 then pcall(rem.FireServer, rem, variant[1])
+                        else pcall(rem.FireServer, rem, variant[1], variant[2]) end
                     end
                     Telemetry.recordEvent(Telemetry.repTracker, 1)
+                else
+                    local t = Remotes.ensureTrainingToolEquipped(true)
+                    if t then pcall(t.Activate, t); Telemetry.recordEvent(Telemetry.repTracker, 1) end
                 end
                 task.defer(Remotes.refresh, false)
             else
@@ -11618,39 +11935,91 @@ local function startLoops()
         }
 
         local function runRepCalibration(remote, nowT)
-            if (nowT - calibCheckT) < 0.22 then return remote end
+            if (nowT - calibCheckT) < 0.25 then return remote end
             local directMuscle = Player:FindFirstChild("muscleEvent")
             local isCoreMuscle = (directMuscle ~= nil) and (remote == directMuscle or (remote.Name == "muscleEvent" and remote.Parent == Player))
-            local curSum = Telemetry.getStatNum("Strength") + Telemetry.getStatNum("Durability")
+            local curSum = Telemetry.getStatNum("Strength") + Telemetry.getStatNum("Durability") + Telemetry.getStatNum("Agility")
             if curSum > calibPrevSum then
                 Remotes.calibratedRemote = remote
                 Remotes.gainScores[remote] = (Remotes.gainScores[remote] or 0) + 1
                 Remotes.zeroGainCounts[remote] = 0
-                if isCoreMuscle then Remotes.variantByRemote[remote] = 1 end
+                if isCoreMuscle and (Remotes.variantByRemote[remote] or 1) == 1 then
+                    Remotes.variantByRemote[remote] = 1
+                end
             elseif curSum < calibPrevSum then
+                -- Player rebirthed; reset baseline cleanly
                 calibPrevSum = curSum
                 calibCheckT = nowT
                 return remote
             elseif curSum >= 9e15 and (Remotes.gainScores[remote] or 0) > 0 then
                 Remotes.calibratedRemote = remote
                 Remotes.zeroGainCounts[remote] = 0
-            elseif isCoreMuscle then
-                Remotes.variantByRemote[remote] = 1
             else
                 local zc = (Remotes.zeroGainCounts[remote] or 0) + 1
                 Remotes.zeroGainCounts[remote] = zc
-                if Remotes.calibratedRemote == remote and zc >= 2 then
-                    Remotes.calibratedRemote = nil
+                -- Many ML copies require a Weight/Pushup/Situp/Handstand tool equipped before muscleEvent grants reps!
+                if zc == 3 then
+                    Remotes.needsToolEquip = true
+                    Remotes.ensureTrainingToolEquipped(true)
                 end
-                local wrapped = Remotes.rotateRepVariant(remote)
-                if wrapped and #Remotes.muscleList > 1 then
-                    Remotes.activeMuscleIdx = (Remotes.activeMuscleIdx % #Remotes.muscleList) + 1
-                    remote = Remotes.getPrimaryMuscle() or remote
+                if isCoreMuscle and zc < 6 then
+                    Remotes.variantByRemote[remote] = 1
+                else
+                    if Remotes.calibratedRemote == remote and zc >= 4 then
+                        Remotes.calibratedRemote = nil
+                    end
+                    local wrapped = Remotes.rotateRepVariant(remote)
+                    if wrapped then
+                        if #Remotes.muscleList > 1 then
+                            Remotes.activeMuscleIdx = (Remotes.activeMuscleIdx % #Remotes.muscleList) + 1
+                            remote = Remotes.getPrimaryMuscle() or remote
+                        elseif zc >= 8 then
+                            Remotes.refresh(true)
+                            remote = Remotes.getPrimaryMuscle() or remote
+                        end
+                    end
                 end
             end
             calibPrevSum = curSum
             calibCheckT = nowT
             return remote
+        end
+
+        local function fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, count, sliceSec, maxRf)
+            local done = 0
+            local t0 = M.clock()
+            if isFunc then
+                local cap = M.min(count, maxRf or 35)
+                for _ = 1, cap do
+                    if not (Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep) then break end
+                    if argCount == 0 then task.spawn(pcall, fireFn, remote)
+                    elseif argCount == 1 then task.spawn(pcall, fireFn, remote, arg1)
+                    else task.spawn(pcall, fireFn, remote, arg1, arg2) end
+                    done += 1
+                end
+            elseif argCount == 0 then
+                for i = 1, count do
+                    local okF = pcall(fireFn, remote)
+                    if not okF then break end
+                    done += 1
+                    if (i % 12 == 0) and (not Runtime.RepGateOpen or activeToken ~= Runtime.SessionTokens.rep or (M.clock() - t0) > sliceSec) then break end
+                end
+            elseif argCount == 1 then
+                for i = 1, count do
+                    local okF = pcall(fireFn, remote, arg1)
+                    if not okF then break end
+                    done += 1
+                    if (i % 12 == 0) and (not Runtime.RepGateOpen or activeToken ~= Runtime.SessionTokens.rep or (M.clock() - t0) > sliceSec) then break end
+                end
+            else
+                for i = 1, count do
+                    local okF = pcall(fireFn, remote, arg1, arg2)
+                    if not okF then break end
+                    done += 1
+                    if (i % 12 == 0) and (not Runtime.RepGateOpen or activeToken ~= Runtime.SessionTokens.rep or (M.clock() - t0) > sliceSec) then break end
+                end
+            end
+            return done
         end
 
         local function stepRepEngine(dt)
@@ -11662,17 +12031,31 @@ local function startLoops()
                 Perf.syncRepPopupShield()
                 carryRemainder = 0; autoRepAcc = 0
                 calibCheckT = M.clock()
-                calibPrevSum = Telemetry.getStatNum("Strength") + Telemetry.getStatNum("Durability")
+                calibPrevSum = Telemetry.getStatNum("Strength") + Telemetry.getStatNum("Durability") + Telemetry.getStatNum("Agility")
             end
             if not (Config.FastRep or Config.AIFastRep or Config.AutoRep) then
                 Runtime.RepGateOpen = false; carryRemainder = 0; Perf.syncRepPopupShield(); return
             end
             Runtime.RepGateOpen = true
 
+            local nowT = M.clock()
             local remote = Remotes.getPrimaryMuscle()
+
+            -- Universal Tool-Only / Tool-Required Copy Support:
+            -- Equip a training tool whenever this copy requires it or has no direct muscle remote, and pulse tool:Activate().
+            if Remotes.needsToolEquip or not (remote and remote.Parent) then
+                local eqTool = Remotes.ensureTrainingToolEquipped(false)
+                if eqTool and eqTool.Parent == Player.Character and (nowT - (Remotes.lastToolActivateT or 0)) >= 0.06 then
+                    Remotes.lastToolActivateT = nowT
+                    pcall(eqTool.Activate, eqTool)
+                    if not (remote and remote.Parent) then
+                        Telemetry.recordEvent(Telemetry.repTracker, 1)
+                        return
+                    end
+                end
+            end
             if not (remote and remote.Parent) then return end
 
-            local nowT = M.clock()
             remote = runRepCalibration(remote, nowT)
             if not (remote and remote.Parent) then return end
 
@@ -11682,8 +12065,8 @@ local function startLoops()
             local isFunc = remote:IsA("RemoteFunction")
             local fireFn = isFunc and remote.InvokeServer or remote.FireServer
             local variant = Remotes.argVariants[Remotes.variantByRemote[remote] or 1]
-            local arg1, arg2 = variant[1], variant[2]
-            local hasArg2 = (arg2 ~= nil)
+            local argCount = variant and #variant or 0
+            local arg1, arg2 = variant and variant[1] or nil, variant and variant[2] or nil
             local jumpMult = M.clamp(M.floor(tonumber(Config.CycleJump) or 1), 1, 100)
             local budgetSec = Perf.frameBudgetSec
 
@@ -11701,35 +12084,11 @@ local function startLoops()
                 local done = 0
 
                 if needed > 0 and Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep then
-                    local t0 = M.clock()
                     local baseSlice = isUnlimited and 0.0042 or M.clamp(budgetSec * 2.0, 0.0022, 0.0048)
                     if Config.ScriptZeroLag and (Telemetry.liveFrameMs > 20 or Perf.frameProtectActive) then
                         baseSlice = M.min(baseSlice, 0.0018)
                     end
-                    if isFunc then
-                        for _ = 1, M.min(needed, 40) do
-                            if not (Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep) then break end
-                            if hasArg2 then task.spawn(pcall, fireFn, remote, arg1, arg2)
-                            else task.spawn(pcall, fireFn, remote, arg1) end
-                            done += 1
-                        end
-                    else
-                        if hasArg2 then
-                            for i = 1, needed do
-                                local okF = pcall(fireFn, remote, arg1, arg2)
-                                if not okF then break end
-                                done += 1
-                                if (i % 12 == 0) and (not Runtime.RepGateOpen or activeToken ~= Runtime.SessionTokens.rep or (M.clock() - t0) > baseSlice) then break end
-                            end
-                        else
-                            for i = 1, needed do
-                                local okF = pcall(fireFn, remote, arg1)
-                                if not okF then break end
-                                done += 1
-                                if (i % 12 == 0) and (not Runtime.RepGateOpen or activeToken ~= Runtime.SessionTokens.rep or (M.clock() - t0) > baseSlice) then break end
-                            end
-                        end
-                    end
+                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, needed, baseSlice, 40)
                     if done > 0 then Telemetry.recordEvent(Telemetry.repTracker, done) end
                 end
                 local rem = quota - done
@@ -11751,34 +12110,11 @@ local function startLoops()
                 local toFire = M.min(M.floor(exactQuota), maxAiFrame)
                 local done = 0
                 if toFire > 0 and Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep then
-                    local t0, aiBudget = M.clock(), M.clamp(budgetSec * 1.6, 0.0018, 0.0042)
+                    local aiBudget = M.clamp(budgetSec * 1.6, 0.0018, 0.0042)
                     if Config.ScriptZeroLag and (Telemetry.liveFrameMs > 20 or Perf.frameProtectActive) then
                         aiBudget = M.min(aiBudget, 0.0016)
                     end
-                    if isFunc then
-                        for _ = 1, M.min(toFire, 25) do
-                            if not (Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep) then break end
-                            if hasArg2 then task.spawn(pcall, fireFn, remote, arg1, arg2)
-                            else task.spawn(pcall, fireFn, remote, arg1) end
-                            done += 1
-                        end
-                    else
-                        if hasArg2 then
-                            for i = 1, toFire do
-                                local okF = pcall(fireFn, remote, arg1, arg2)
-                                if not okF then break end
-                                done += 1
-                                if (i % 12 == 0) and (not Runtime.RepGateOpen or activeToken ~= Runtime.SessionTokens.rep or (M.clock() - t0) > aiBudget) then break end
-                            end
-                        else
-                            for i = 1, toFire do
-                                local okF = pcall(fireFn, remote, arg1)
-                                if not okF then break end
-                                done += 1
-                                if (i % 12 == 0) and (not Runtime.RepGateOpen or activeToken ~= Runtime.SessionTokens.rep or (M.clock() - t0) > aiBudget) then break end
-                            end
-                        end
-                    end
+                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, toFire, aiBudget, 25)
                     if done > 0 then Telemetry.recordEvent(Telemetry.repTracker, done) end
                 end
                 local rem = exactQuota - done
@@ -11787,27 +12123,10 @@ local function startLoops()
 
             elseif Config.AutoRep then
                 autoRepAcc = M.min(autoRepAcc + safeDt * M.clamp(1 + (jumpMult - 1) * 0.15, 1, 4), 0.32)
-                local done = 0
                 if autoRepAcc >= 0.032 and Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep then
-                    if isFunc then
-                        while autoRepAcc >= 0.032 do
-                            if not (Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep) then break end
-                            autoRepAcc -= 0.032
-                            if hasArg2 then task.spawn(pcall, fireFn, remote, arg1, arg2)
-                            else task.spawn(pcall, fireFn, remote, arg1) end
-                            done += 1
-                        end
-                    else
-                        pcall(function()
-                            while autoRepAcc >= 0.032 do
-                                if not (Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep) then break end
-                                autoRepAcc -= 0.032
-                                if hasArg2 then fireFn(remote, arg1, arg2)
-                                else fireFn(remote, arg1) end
-                                done += 1
-                            end
-                        end)
-                    end
+                    local steps = M.floor(autoRepAcc / 0.032)
+                    autoRepAcc -= steps * 0.032
+                    local done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, steps, 0.0020, 8)
                     if done > 0 then Telemetry.recordEvent(Telemetry.repTracker, done) end
                 end
             end
@@ -12168,17 +12487,18 @@ local function startLoops()
             Perf.lastLuaWorkMs = (M.clock() - workT0) * 1000
         end))
 
-        -- 2. LEGIT AUTO REBIRTH GAMEPASS ENGINE
+        -- 2. UNIVERSAL ADAPTIVE AUTO REBIRTH ENGINE (Original 6.00s + Fast/Instant Modded Copies + GUI Fallback)
         local stepRebirthEngine
         do
             local lastAttempt, wasCool, rebTriedAt, rebTriedSeq = 0, false, nil, 0
+            local rebFailCycles, adaptiveCd = 0, 0.55
             local lastToken = Runtime.SessionTokens.reb
             local rfInFlight = setmetatable({}, {__mode = "k"})
             stepRebirthEngine = function()
                 local myToken = Runtime.SessionTokens.reb
                 if lastToken ~= myToken then
                     lastToken = myToken
-                    wasCool = false; rebTriedAt = nil; rebTriedSeq = 0
+                    wasCool = false; rebTriedAt = nil; rebTriedSeq = 0; rebFailCycles = 0
                 end
                 if Config.AutoRebirth then
                     local now = M.clock()
@@ -12189,7 +12509,10 @@ local function startLoops()
                         local gained = curReb - Telemetry.lastKnownRebirthCount
                         if Telemetry.lastConfirmedRebirthTime > 0 then
                             local measured = now - Telemetry.lastConfirmedRebirthTime
-                            Telemetry.rebCycleDuration = (measured >= 5.5 and measured <= 7.0) and measured or LEGIT_GAMEPASS_REBIRTH_COOLDOWN
+                            if measured >= 0.20 and measured <= 15.0 then
+                                Telemetry.rebCycleDuration = (measured >= 5.4 and measured <= 7.0) and LEGIT_GAMEPASS_REBIRTH_COOLDOWN or measured
+                                adaptiveCd = M.clamp(measured, 0.25, LEGIT_GAMEPASS_REBIRTH_COOLDOWN)
+                            end
                         else
                             Telemetry.rebCycleDuration = LEGIT_GAMEPASS_REBIRTH_COOLDOWN
                         end
@@ -12198,6 +12521,7 @@ local function startLoops()
                         Telemetry.lastKnownRebirthCount = curReb
                         Telemetry.rebConfirmedSeq += 1
                         rebTriedAt = nil
+                        rebFailCycles = 0
                     end
                     if rebTriedAt ~= nil and (Telemetry.rebConfirmedSeq > rebTriedSeq or Telemetry.lastConfirmedRebirthTime >= rebTriedAt) then
                         rebTriedAt = nil
@@ -12210,17 +12534,19 @@ local function startLoops()
                     else
                         Telemetry.rebHasServerCd = false
                         local anchor = M.max(Telemetry.lastConfirmedRebirthTime, Telemetry.lastRebFire)
-                        rem = (anchor > 0) and M.max(0, LEGIT_GAMEPASS_REBIRTH_COOLDOWN - (now - anchor)) or 0
+                        local cdTarget = (rebFailCycles >= 2) and LEGIT_GAMEPASS_REBIRTH_COOLDOWN or adaptiveCd
+                        rem = (anchor > 0) and M.max(0, cdTarget - (now - anchor)) or 0
                     end
                     Telemetry.rebCooldownLeft = rem
                     local justZero = wasCool and (rem <= 0)
                     if rem > 0 then wasCool = true end
 
-                    if rem <= 0 and (justZero or (now - lastAttempt >= 0.08)) then
+                    if rem <= 0 and (justZero or (now - lastAttempt >= 0.12)) then
                         local curStr, reqStr = Telemetry.getStatNum("Strength"), Telemetry.getNextRebirthReq(curReb)
                         if (not Config.SmartRebirthGuard) or (curStr >= reqStr) then
                             local rebRemotes = Remotes.getAllRebirth()
-                            local canTryAny = false
+                            local rebGuiBtn = Remotes.findRebirthGuiButton()
+                            local canTryAny = (rebGuiBtn ~= nil)
                             for _, r in ipairs(rebRemotes) do
                                 if r and r.Parent then
                                     if not r:IsA("RemoteFunction") or not (rfInFlight[r] and (now - rfInFlight[r] < 2.5)) then
@@ -12232,6 +12558,7 @@ local function startLoops()
                             if canTryAny then
                                 if rebTriedAt ~= nil and (now - rebTriedAt >= 0.35)
                                     and Telemetry.rebConfirmedSeq == rebTriedSeq and Telemetry.lastConfirmedRebirthTime < rebTriedAt then
+                                    rebFailCycles += 1
                                     for _, r in ipairs(rebRemotes) do
                                         local curIdx = Remotes.rebirthVariantByRemote[r] or 1
                                         Remotes.rebirthVariantByRemote[r] = (curIdx % #Remotes.rebirthVariants) + 1
@@ -12265,13 +12592,17 @@ local function startLoops()
                                         end
                                     end
                                 end
+                                -- Universal GUI Rebirth fallback when remotes didn't match or none exist in this copy
+                                if rebGuiBtn and (#rebRemotes == 0 or rebFailCycles >= 1) and RewardEngine and RewardEngine.fireGuiButton then
+                                    pcall(RewardEngine.fireGuiButton, rebGuiBtn)
+                                end
                             end
                         else
                             rebTriedAt = nil
                         end
                     end
                 elseif wasCool or rebTriedAt ~= nil or Telemetry.rebCooldownLeft ~= 0 then
-                    wasCool = false; rebTriedAt = nil; rebTriedSeq = 0; Telemetry.rebCooldownLeft = 0; Telemetry.rebHasServerCd = false
+                    wasCool = false; rebTriedAt = nil; rebTriedSeq = 0; rebFailCycles = 0; Telemetry.rebCooldownLeft = 0; Telemetry.rebHasServerCd = false
                 end
             end
         end
@@ -12522,6 +12853,7 @@ hardRefresh = function()
     resetAllFeaturesToNormal()
     teardownUIOnly()
     Remotes.muscleList = {}; Remotes.toolRemotes = {}; Remotes.combatRemotes = {}; Remotes.rebirthList = {}
+    Remotes.punchRemotes = {}; Remotes.cachedRebGuiBtn = nil; Remotes.needsToolEquip = false; Remotes.activeTrainingTool = nil
     Remotes.questRemotes = {}; Remotes.dailyRemotes = {}; Remotes.chestRemotes = {}; Remotes.genericRewardRemotes = {}
     Remotes.timeRewardRemotes = {}; Remotes.wheelRemotes = {}; Remotes.wheelChanceItems = {}
     Remotes.activeMuscleIdx = 1; Remotes.lastScan = 0; Remotes.deepScannedOnce = false
