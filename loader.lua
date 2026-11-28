@@ -12009,89 +12009,71 @@ local function startLoops()
                 local isCustom = (Config.RepBurstMode == "Custom")
                 local isUnlimited = Config.RepLimiterOpen or (rawTarget == M.huge)
                 local presetRate = (not isCustom) and REP_PRESET_RATES[Config.RepBurstMode] or nil
-                local targetPerSec = isUnlimited and 1200 or (presetRate or M.max(1, M.floor(rawTarget)))
+                local targetPerSec = isUnlimited and 960 or (presetRate or M.max(1, M.floor(rawTarget)))
 
-                -- Low-Ping Outgoing Queue Governor: keeps Roblox's reliable packet queue drained
-                -- so movement, jump, and character reset NEVER freeze even at 800+, 1000+, 2000+, or Inf!
+                -- Adaptive Low-Ping Queue Governor (works at ANY region ping, NEVER deadlocks at 0!):
                 local liveP = tonumber(Telemetry.livePing) or 0
-                local baseP = M.max(20, tonumber(Telemetry.baselinePing) or 60)
-                local pingDelta = liveP - baseP
-                if pingDelta > 42 or liveP > (baseP + 55) or liveP > 220 then
-                    repPingScale = M.max(0.12, repPingScale * 0.65)
-                    repDrainUntil = nowT + 0.14
-                    carryRemainder = 0
-                elseif pingDelta > 22 or safeDt > 0.042 then
-                    repPingScale = M.max(0.22, repPingScale * 0.86)
-                    carryRemainder = M.min(carryRemainder, 2)
-                elseif pingDelta > 12 then
-                    repPingScale = M.max(0.45, repPingScale * 0.94)
-                elseif pingDelta <= 10 and safeDt <= 0.032 then
-                    repPingScale = M.min(1.0, repPingScale + safeDt * 0.45)
+                local baseP = M.max(20, tonumber(Telemetry.baselinePing) or liveP)
+                local pingDelta = M.max(0, liveP - baseP)
+                if pingDelta > 80 then
+                    repPingScale = M.max(0.30, repPingScale * 0.90)
+                elseif pingDelta > 40 or safeDt > 0.045 then
+                    repPingScale = M.max(0.50, repPingScale * 0.95)
+                elseif pingDelta <= 25 and safeDt <= 0.036 then
+                    repPingScale = M.min(1.0, repPingScale + safeDt * 0.65)
                 end
 
-                if nowT < repDrainUntil then
-                    carryRemainder = 0
-                    return
-                end
-
-                -- Hard network-safe ceiling (~960/s max sustainable reliable remotes without choking replication)
+                -- Network-safe ceiling (~960/s max sustainable reliable remotes without choking replication)
                 local safeTarget = M.min(targetPerSec, 960)
-                local effectiveRate = M.max(1, M.floor(safeTarget * repPingScale))
-                local hardFrameCap = (pingDelta > 18) and 4 or ((pingDelta > 10) and 8 or 16)
-                local maxFrameCap = M.clamp(M.ceil(effectiveRate * safeDt * 1.15), 1, hardFrameCap)
+                local effectiveRate = M.max(120, M.floor(safeTarget * repPingScale))
+                local hardFrameCap = (pingDelta > 80) and 6 or ((pingDelta > 40) and 10 or 16)
+                local maxFrameCap = M.clamp(M.ceil(effectiveRate * safeDt * 1.25), 1, hardFrameCap)
                 local quota = (effectiveRate * safeDt) + carryRemainder
                 local needed = M.min(M.floor(quota), maxFrameCap)
                 local done = 0
 
                 if needed > 0 and Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep then
-                    local baseSlice = M.clamp(budgetSec * 1.35, 0.0012, 0.0026)
+                    local baseSlice = M.clamp(budgetSec * 1.45, 0.0014, 0.0028)
                     if Config.ScriptZeroLag and (Telemetry.liveFrameMs > 20 or Perf.frameProtectActive) then
-                        baseSlice = M.min(baseSlice, 0.0014)
+                        baseSlice = M.min(baseSlice, 0.0016)
                     end
-                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, needed, baseSlice, 12)
+                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, needed, baseSlice, 14)
                     if done > 0 then Telemetry.recordEvent(Telemetry.repTracker, done) end
                 end
                 local rem = quota - done
                 if rem ~= rem or rem < 0 then rem = 0 end
-                carryRemainder = M.clamp(rem, 0, 2)
+                carryRemainder = M.clamp(rem, 0, 4)
 
             elseif Config.AIFastRep then
                 local liveP = tonumber(Telemetry.livePing) or 0
-                local baseP = M.max(20, tonumber(Telemetry.baselinePing) or 60)
-                local pingDelta = liveP - baseP
+                local baseP = M.max(20, tonumber(Telemetry.baselinePing) or liveP)
+                local pingDelta = M.max(0, liveP - baseP)
                 local scaleBoost = M.clamp((tonumber(Config.CycleRate) or 100) / 100, 0.5, 2.0)
                 local maxAiRate = M.min(840, M.max(320, M.floor(620 * scaleBoost)))
-                if pingDelta > 38 or liveP > (baseP + 50) or liveP > 210 then
-                    Telemetry.aiCurrentRepRate = M.max(140, M.floor(Telemetry.aiCurrentRepRate * 0.72))
-                    repDrainUntil = nowT + 0.12
-                    carryRemainder = 0
-                elseif safeDt > 0.042 or pingDelta > 18 then
-                    Telemetry.aiCurrentRepRate = M.max(180, M.floor(Telemetry.aiCurrentRepRate * 0.88))
-                elseif safeDt <= 0.032 and pingDelta <= 10 then
-                    Telemetry.aiCurrentRepRate = M.min(maxAiRate, M.floor(Telemetry.aiCurrentRepRate * 1.04 + 6))
+                if pingDelta > 80 then
+                    Telemetry.aiCurrentRepRate = M.max(200, M.floor(Telemetry.aiCurrentRepRate * 0.90))
+                elseif safeDt > 0.045 or pingDelta > 40 then
+                    Telemetry.aiCurrentRepRate = M.max(240, M.floor(Telemetry.aiCurrentRepRate * 0.95))
+                elseif safeDt <= 0.036 and pingDelta <= 25 then
+                    Telemetry.aiCurrentRepRate = M.min(maxAiRate, M.floor(Telemetry.aiCurrentRepRate * 1.05 + 8))
                 end
 
-                if nowT < repDrainUntil then
-                    carryRemainder = 0
-                    return
-                end
-
-                local hardAiCap = (pingDelta > 16) and 4 or 12
-                local maxAiFrame = M.clamp(M.ceil(Telemetry.aiCurrentRepRate * safeDt * 1.15), 1, hardAiCap)
+                local hardAiCap = (pingDelta > 80) and 6 or ((pingDelta > 40) and 10 or 14)
+                local maxAiFrame = M.clamp(M.ceil(Telemetry.aiCurrentRepRate * safeDt * 1.25), 1, hardAiCap)
                 local exactQuota = (Telemetry.aiCurrentRepRate * safeDt) + carryRemainder
                 local toFire = M.min(M.floor(exactQuota), maxAiFrame)
                 local done = 0
                 if toFire > 0 and Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep then
-                    local aiBudget = M.clamp(budgetSec * 1.25, 0.0012, 0.0024)
+                    local aiBudget = M.clamp(budgetSec * 1.35, 0.0014, 0.0026)
                     if Config.ScriptZeroLag and (Telemetry.liveFrameMs > 20 or Perf.frameProtectActive) then
-                        aiBudget = M.min(aiBudget, 0.0014)
+                        aiBudget = M.min(aiBudget, 0.0016)
                     end
-                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, toFire, aiBudget, 10)
+                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, toFire, aiBudget, 12)
                     if done > 0 then Telemetry.recordEvent(Telemetry.repTracker, done) end
                 end
                 local rem = exactQuota - done
                 if rem ~= rem or rem < 0 then rem = 0 end
-                carryRemainder = M.clamp(rem, 0, 2)
+                carryRemainder = M.clamp(rem, 0, 4)
 
             elseif Config.AutoRep then
                 autoRepAcc = M.min(autoRepAcc + safeDt * M.clamp(1 + (jumpMult - 1) * 0.15, 1, 4), 0.32)
