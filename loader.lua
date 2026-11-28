@@ -311,6 +311,8 @@ local DefaultConfig = {
 
     AutoRebirth = false,
     SmartRebirthGuard = true,
+    RebirthTargetEnabled = false,
+    RebirthTargetValue = 0,
 
     AutoPunch = false,
     FreezeCharacter = false,
@@ -604,10 +606,17 @@ do
     local SuffixPairs = {
         {"K",3},{"M",6},{"B",9},{"T",12},{"Qa",15},{"Qi",18},{"Sx",21},{"Sp",24},{"Oc",27},
         {"No",30},{"Dc",33},{"Ud",36},{"Dd",39},{"Td",42},{"Qad",45},{"Qid",48},{"Sxd",51},
-        {"Spd",54},{"Ocd",57},{"Nod",60},{"Vg",63},{"Ce",303}
+        {"Spd",54},{"Ocd",57},{"Nod",60},{"Vg",63},{"Uvg",66},{"Dvg",69},{"Tvg",72},
+        {"Qavg",75},{"Qivg",78},{"Sxvg",81},{"Spvg",84},{"Ocvg",87},{"Novg",90},{"Tg",93},
+        {"Utg",96},{"Dtg",99},{"Googol",100},{"Googols",100},{"Gg",100},{"Ttg",102},{"Qatg",105},
+        {"Qitg",108},{"Sxtg",111},{"Sptg",114},{"Octg",117},{"Notg",120},{"Ce",303}
     }
     for _, p in ipairs(SuffixPairs) do SuffixMap[p[1]:lower()] = p[2] end
-    local Suffixes = {"","K","M","B","T","Qa","Qi","Sx","Sp","Oc","No","Dc","Ud","Dd","Td","Qad","Qid","Sxd","Spd","Ocd","Nod","Vg"}
+    local Suffixes = {
+        "","K","M","B","T","Qa","Qi","Sx","Sp","Oc","No","Dc","Ud","Dd","Td","Qad","Qid",
+        "Sxd","Spd","Ocd","Nod","Vg","Uvg","Dvg","Tvg","Qavg","Qivg","Sxvg","Spvg","Ocvg",
+        "Novg","Tg","Utg","Dtg"
+    }
 
     function Core.parseSmartInput(rawInput)
         local trimmed = tostring(rawInput or "0"):gsub("^%s+", ""):gsub("%s+$", "")
@@ -630,8 +639,11 @@ do
         if low == "nan" then
             return {num = 0 / 0, isNaN = true, isInf = false, isPercent = false, pct = 0, opensLimit = false}
         end
-        if low == "inf" or low == "infinite" or low == "infinity" then
+        if low == "inf" or low == "infinite" or low == "infinity" or low == "googolplex" then
             return {num = M.huge, isNaN = false, isInf = true, isPercent = false, pct = 100, opensLimit = true}
+        end
+        if low == "googol" or low == "googols" or low == "gg" then
+            return {num = 1e100, isNaN = false, isInf = false, isPercent = false, pct = 0, opensLimit = hadOpenTag}
         end
         local pctNum = low:match("^([%+%-]?%d*%.?%d+)%%$")
         if pctNum then
@@ -639,12 +651,31 @@ do
             local openL = (p >= 100) or hadOpenTag
             return {num = p, isNaN = false, isInf = openL, isPercent = true, pct = p, opensLimit = openL}
         end
+        -- Scientific notation (e.g. 1e100, 2.5e+100, 1e308, 1e309 -> Inf)
+        if low:match("^[%+%-]?%d*%.?%d+e[%+%-]?%d+$") then
+            local sciVal = tonumber(low)
+            if sciVal ~= nil and sciVal == sciVal then
+                sciVal = M.max(0, sciVal)
+                local isInfV = (sciVal == M.huge)
+                return {num = sciVal, isNaN = false, isInf = isInfV, isPercent = false, pct = 0, opensLimit = isInfV or hadOpenTag}
+            end
+        end
         local numPart, sufPart = clean:match("^([%+%-]?%d*%.?%d+)([a-zA-Z]*)$")
         if not numPart then
             return {num = 0, isNaN = false, isInf = false, isPercent = false, pct = 0, opensLimit = false, invalid = true}
         end
-        local exp = (sufPart ~= "" and SuffixMap[sufPart:lower()]) or 0
-        local val = M.max(0, tonumber(numPart) or 0) * (10 ^ exp)
+        local exp = 0
+        if sufPart ~= "" then
+            exp = SuffixMap[sufPart:lower()]
+            if exp == nil then
+                return {num = 0, isNaN = false, isInf = false, isPercent = false, pct = 0, opensLimit = false, invalid = true}
+            end
+        end
+        local baseN = tonumber(numPart)
+        if baseN == nil or baseN ~= baseN then
+            return {num = 0, isNaN = false, isInf = false, isPercent = false, pct = 0, opensLimit = false, invalid = true}
+        end
+        local val = M.max(0, baseN) * (10 ^ exp)
         local openL = (val == M.huge) or hadOpenTag
         return {num = val, isNaN = false, isInf = (val == M.huge), isPercent = false, pct = 0, opensLimit = openL}
     end
@@ -657,6 +688,17 @@ do
         n = M.abs(n)
         if n < 1000 then
             return (n % 1 == 0) and (sign .. tostring(n)) or M.fmtStr("%s%.2f", sign, n)
+        end
+        if n >= 1e100 and n < 1e103 then
+            local g = n / 1e100
+            local gs = (M.abs(g - M.floor(g + 0.5)) < 0.005) and tostring(M.floor(g + 0.5)) or M.fmtStr("%.2f", g):gsub("0+$", ""):gsub("%.$", "")
+            return sign .. gs .. " Googol"
+        end
+        if n >= 1e103 then
+            local exp = M.floor(M.log10(n))
+            local mant = n / (10 ^ exp)
+            if mant >= 9.995 then mant = mant / 10; exp += 1 end
+            return M.fmtStr("%s%.2fe%d", sign, mant, exp)
         end
         local i = M.min(M.floor(M.log10(n) / 3), #Suffixes - 1)
         local v = n / (10 ^ (i * 3))
@@ -673,6 +715,17 @@ do
             if n >= 10 then return M.fmtStr("%.1f", n):gsub("%.0$", "") end
             return M.fmtStr("%.2f", n):gsub("0+$", ""):gsub("%.$", "")
         end
+        if n >= 1e100 and n < 1e103 then
+            local g = n / 1e100
+            local gs = (M.abs(g - M.floor(g + 0.5)) < 0.05) and tostring(M.floor(g + 0.5)) or M.fmtStr("%.1f", g):gsub("%.0$", "")
+            return gs .. "Googol"
+        end
+        if n >= 1e103 then
+            local exp = M.floor(M.log10(n))
+            local mant = n / (10 ^ exp)
+            if mant >= 9.95 then mant = mant / 10; exp += 1 end
+            return M.fmtStr("%.1fe%d", mant, exp):gsub("%.0e", "e")
+        end
         local i = M.min(M.floor(M.log10(n) / 3), #Suffixes - 1)
         local v = n / (10 ^ (i * 3))
         if v >= 999.95 and i < #Suffixes - 1 then i += 1; v = n / (10 ^ (i * 3)) end
@@ -683,6 +736,7 @@ do
     function Core.fmtExactInt(n)
         n = M.floor(tonumber(n) or 0)
         if n == M.huge then return "Inf" end
+        if M.abs(n) >= 1e15 then return Core.fmt(n) end
         return tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
     end
 
@@ -1297,6 +1351,7 @@ local Remotes = {
     punchRemotes = {},
     combatRemotes = {},
     rebirthList = {},
+    autoRebirthSettingRemotes = {},
     questRemotes = {},
     dailyRemotes = {},
     chestRemotes = {},
@@ -1517,7 +1572,8 @@ do
     local function scoreRebirthRemote(inst)
         local n, pLow, gpLow, f = getContextStrings(inst)
         if isBlockedRemote(n, f) then return -1 end
-        if n:find("shop") or n:find("gamepass") or n:find("robux") or n:find("pet") or n:find("setting") or n:find("gui") or n:find("ui") then
+        if n:find("shop") or n:find("gamepass") or n:find("robux") or n:find("pet") or n:find("setting")
+            or n:find("gui") or n:find("ui") or n:find("autorebirth") or n:find("toggle") then
             return -1
         end
         if n == "rebirthremote" or n == "rebirthevent" then return 100 end
@@ -1641,6 +1697,16 @@ do
                 if rScore > 0 then
                     buckets.rCandidates[#buckets.rCandidates + 1] = {remote = cInst, score = rScore, name = inst.Name}
                 end
+                local snLow, _, _, sfLow = getContextStrings(inst)
+                if not isBlockedRemote(snLow, sfLow) and not (snLow:find("shop") or snLow:find("gamepass") or snLow:find("robux")) then
+                    if snLow:find("autorebirth")
+                        or snLow == "changesetting" or snLow == "changesettings" or snLow == "changesettingsevent" or snLow == "changesettingevent"
+                        or snLow == "settingevent" or snLow == "settingsevent"
+                        or snLow == "settingremote" or snLow == "settingsremote"
+                        or snLow == "updatesetting" or snLow == "togglesetting" then
+                        pushUnique(buckets.arSetList, inst, snLow:find("autorebirth") ~= nil)
+                    end
+                end
                 local rKind = classifyRewardRemote(inst)
                 local targetList = rKind and buckets.rewardMap[rKind] or nil
                 if targetList then
@@ -1693,7 +1759,7 @@ do
 
         local qList, dList, chList, gList, tList, wList = {}, {}, {}, {}, {}, {}
         local buckets = {
-            mCandidates = {}, rCandidates = {}, cList = {}, pList = {},
+            mCandidates = {}, rCandidates = {}, cList = {}, pList = {}, arSetList = {},
             qList = qList, dList = dList, chList = chList, gList = gList, tList = tList, wList = wList,
             rewardMap = {quest = qList, daily = dList, chest = chList, time = tList, generic = gList, wheel = wList},
             audited = 0,
@@ -1758,6 +1824,7 @@ do
         table.sort(tList, function(a, b)
             return scoreGiftRemote(a) > scoreGiftRemote(b)
         end)
+        Remotes.autoRebirthSettingRemotes = buckets.arSetList
         Remotes.questRemotes = qList; Remotes.dailyRemotes = dList
         Remotes.chestRemotes = chList; Remotes.genericRewardRemotes = gList
         Remotes.timeRewardRemotes = tList; Remotes.wheelRemotes = wList
@@ -4218,6 +4285,7 @@ local Telemetry = {
     rebCycleDuration = LEGIT_GAMEPASS_REBIRTH_COOLDOWN, lastRebGainPerCycle = 0,
     lastRebFire = 0, lastConfirmedRebirthTime = 0, lastKnownRebirthCount = nil,
     rebInvokeInFlight = false, rebInvokeStart = 0, rebConfirmedSeq = 0,
+    rebTargetReached = false, gamepassAutoRebDisabled = false, lastGamepassDisableT = 0,
     cachedGuiRebReq = nil, cachedGuiRebReqForCount = nil, lastGuiRebScan = 0,
     liveRawFPS = 60, smoothFPS = 60, livePing = 0, smoothPing = 0, baselinePing = 65,
     liveFrameMs = 16.6, smoothFrameMs = 16.6, aiCurrentRepRate = 180,
@@ -10278,6 +10346,254 @@ do
         local r = Telemetry.getStatNum("Rebirths")
         Telemetry.baseReb = (r > 0) and r or nil; Telemetry.lastRebGainPerCycle = 0
     end
+
+    local GP_SETTING_BOXES = {
+        "Settings", "settings", "Data", "data", "Stats", "stats", "PlayerData",
+        "Gamepasses", "gamepasses", "Values", "Profile", "HiddenStats", "Options", "Config",
+    }
+    local GP_SKIP_GUIS = {Chat = true, BubbleChat = true, Freecam = true, TouchGui = true}
+
+    local function isAutoRebKeyName(rawName)
+        local compact = tostring(rawName or ""):lower():gsub("[%s_%-%./]", "")
+        return compact == "autorebirth"
+            or compact == "autorebirthenabled"
+            or compact == "autorebirthon"
+            or compact == "autorebirthactive"
+            or compact == "autorebirthtoggle"
+            or compact == "isautorebirth"
+            or compact == "isautorebirthing"
+            or compact == "autorebirths"
+    end
+
+    local function isOwnHubGui(gui)
+        return (Runtime.UI.GUI and (gui == Runtime.UI.GUI or gui:IsDescendantOf(Runtime.UI.GUI)))
+            or (Runtime.UI.ToggleGui and (gui == Runtime.UI.ToggleGui or gui:IsDescendantOf(Runtime.UI.ToggleGui)))
+    end
+
+    local function scanInGameAutoRebirthState()
+        local isOn, boolVals, attrHosts, activeBtns = false, {}, {}, {}
+        local roots = {Player}
+        for _, boxName in ipairs(GP_SETTING_BOXES) do
+            local f = Player:FindFirstChild(boxName)
+            if f then roots[#roots + 1] = f end
+        end
+        for _, r in ipairs(roots) do
+            for ak, av in pairs(r:GetAttributes()) do
+                if isAutoRebKeyName(ak) then
+                    local alv = (type(av) == "string") and av:lower() or nil
+                    if av == true or alv == "on" or alv == "true" or alv == "enabled" then
+                        isOn = true
+                        attrHosts[#attrHosts + 1] = {inst = r, key = ak}
+                    end
+                end
+            end
+            for _, ch in ipairs(r:GetChildren()) do
+                if ch:IsA("ValueBase") and isAutoRebKeyName(ch.Name) then
+                    local v = ch.Value
+                    local vl = (type(v) == "string") and v:lower() or nil
+                    if v == true or vl == "on" or vl == "true" or vl == "enabled" then
+                        isOn = true
+                        boolVals[#boolVals + 1] = ch
+                    end
+                end
+            end
+        end
+
+        local pGui = Player:FindFirstChildOfClass("PlayerGui")
+        if pGui then
+            for _, gui in ipairs(pGui:GetChildren()) do
+                if gui:IsA("ScreenGui") and not GP_SKIP_GUIS[gui.Name] and not isOwnHubGui(gui) then
+                    local gl = gui.Name:lower()
+                    if not (gl:find("shop") or gl:find("store") or gl:find("robux") or gl:find("popup") or gl:find("chat")) then
+                        for _, d in ipairs(gui:GetDescendants()) do
+                            if d:IsA("GuiButton") then
+                                local ownTxt = d:IsA("TextButton") and tostring(d.Text or ""):gsub("<[^>]+>", " "):lower() or ""
+                                local ctxParts = {d.Name:lower(), ownTxt}
+                                local cur = d.Parent
+                                for _ = 1, 3 do
+                                    if not cur or cur == gui then break end
+                                    ctxParts[#ctxParts + 1] = cur.Name:lower()
+                                    cur = cur.Parent
+                                end
+                                for _, ch in ipairs(d:GetDescendants()) do
+                                    if ch:IsA("TextLabel") and ch.Text and #ch.Text <= 40 then
+                                        ctxParts[#ctxParts + 1] = ch.Text:gsub("<[^>]+>", " "):lower()
+                                    end
+                                end
+                                local ctx = table.concat(ctxParts, " ")
+                                local isBuy = ctx:find("robux", 1, true) or ctx:find("r$", 1, true)
+                                    or ctx:find("buy", 1, true) or ctx:find("purchase", 1, true)
+                                    or ctx:find("shop", 1, true) or ctx:find("store", 1, true)
+                                    or ctx:find("unlock", 1, true) or ctx:find("owned", 1, true)
+                                if not isBuy and ctx:find("auto", 1, true) and ctx:find("rebirth", 1, true) then
+                                    local saysOff = (ctx:find("%f[%a]off%f[%A]") ~= nil)
+                                        or (ctx:find("disabled", 1, true) ~= nil)
+                                        or (ctx:find("inactive", 1, true) ~= nil)
+                                    local saysOn = (not saysOff) and (
+                                        (ctx:find("%f[%a]on%f[%A]") ~= nil)
+                                        or (ctx:find("enabled", 1, true) ~= nil)
+                                        or (ctx:find("active", 1, true) ~= nil)
+                                        or (ctx:find("disable", 1, true) ~= nil)
+                                        or (ctx:find("stop", 1, true) ~= nil)
+                                        or (ctx:find("✓", 1, true) ~= nil)
+                                        or (ctx:find("✔", 1, true) ~= nil)
+                                    )
+                                    local looksGreen = false
+                                    if not saysOff and not saysOn then
+                                        local function checkGreenCol(c)
+                                            return c and (c.G > c.R + 0.14) and (c.G > c.B + 0.10) and (c.G > 0.45)
+                                        end
+                                        if d.BackgroundTransparency < 0.85 and checkGreenCol(d.BackgroundColor3) then
+                                            looksGreen = true
+                                        elseif d:IsA("ImageButton") and checkGreenCol(d.ImageColor3) then
+                                            looksGreen = true
+                                        else
+                                            for _, sub in ipairs(d:GetChildren()) do
+                                                if (sub:IsA("Frame") and sub.BackgroundTransparency < 0.85 and checkGreenCol(sub.BackgroundColor3))
+                                                    or (sub:IsA("ImageLabel") and sub.ImageTransparency < 0.85 and checkGreenCol(sub.ImageColor3)) then
+                                                    looksGreen = true
+                                                    break
+                                                end
+                                            end
+                                        end
+                                    end
+                                    if saysOn or looksGreen or (isOn and not saysOff) then
+                                        isOn = true
+                                        activeBtns[#activeBtns + 1] = d
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return isOn, boolVals, attrHosts, activeBtns
+    end
+
+    function Telemetry.disableGamepassAutoRebirth(forceNow)
+        local now = M.clock()
+        if not forceNow and (now - (Telemetry.lastGamepassDisableT or 0)) < 0.90 then
+            return false
+        end
+        Telemetry.lastGamepassDisableT = now
+
+        local gpOn, boolVals, attrHosts, activeBtns = scanInGameAutoRebirthState()
+        local acted = false
+
+        -- 1. Idempotent explicit-false disable on any discovered settings / setAutoRebirth remotes (NEVER toggles ON)
+        if gpOn or forceNow then
+            for _, rem in ipairs(Remotes.autoRebirthSettingRemotes or {}) do
+                if rem and rem.Parent then
+                    local rn = rem.Name:lower()
+                    local isSettingRem = rn:find("setting", 1, true) ~= nil
+                    local isSetOnly = rn:find("set", 1, true) ~= nil
+                    local payloads = {}
+                    if isSettingRem then
+                        payloads = {
+                            {"autoRebirth", false},
+                            {"AutoRebirth", false},
+                            {"Auto Rebirth", false},
+                            {"changeSetting", "autoRebirth", false},
+                            {"changeSetting", "AutoRebirth", false},
+                        }
+                    elseif isSetOnly then
+                        payloads = {{false}, {"autoRebirth", false}}
+                    elseif gpOn then
+                        -- Only fire toggle-style autoRebirth remotes when confirmed ON
+                        payloads = {{false}, {"off"}, {}}
+                    end
+                    for _, args in ipairs(payloads) do
+                        if rem:IsA("RemoteFunction") then
+                            task.spawn(function()
+                                if #args == 0 then pcall(rem.InvokeServer, rem)
+                                else pcall(rem.InvokeServer, rem, table.unpack(args, 1, #args)) end
+                            end)
+                        else
+                            if #args == 0 then pcall(rem.FireServer, rem)
+                            else pcall(rem.FireServer, rem, table.unpack(args, 1, #args)) end
+                        end
+                        acted = true
+                    end
+                end
+            end
+        end
+
+        -- 2. Fire the in-game Auto Rebirth gamepass GUI button ONLY when confirmed ON
+        if gpOn and #activeBtns > 0 then
+            for _, btn in ipairs(activeBtns) do
+                if RewardEngine and RewardEngine.fireGuiButton and RewardEngine.fireGuiButton(btn) then
+                    acted = true
+                end
+            end
+        end
+
+        -- 3. Local client-side BoolValue / Attribute safety verification after 0.25s
+        if gpOn and (#boolVals > 0 or #attrHosts > 0) then
+            acted = true
+            task.delay(0.25, function()
+                if not (Config.Active and Config.RebirthTargetEnabled and Telemetry.rebTargetReached) then return end
+                for _, bv in ipairs(boolVals) do
+                    pcall(function()
+                        if bv and bv.Parent then
+                            if bv:IsA("BoolValue") and bv.Value == true then
+                                bv.Value = false
+                            elseif bv:IsA("StringValue") and (bv.Value:lower() == "on" or bv.Value:lower() == "true" or bv.Value:lower() == "enabled") then
+                                bv.Value = "Off"
+                            end
+                        end
+                    end)
+                end
+                for _, ah in ipairs(attrHosts) do
+                    pcall(function()
+                        if ah.inst and ah.inst.Parent then
+                            local curV = ah.inst:GetAttribute(ah.key)
+                            if curV == true then ah.inst:SetAttribute(ah.key, false) end
+                        end
+                    end)
+                end
+            end)
+        end
+
+        if gpOn and acted then
+            Telemetry.gamepassAutoRebDisabled = true
+        end
+        return gpOn and acted
+    end
+
+    function Telemetry.enforceRebirthTarget(curReb, instantForce)
+        if not Config.RebirthTargetEnabled then
+            Telemetry.rebTargetReached = false
+            return false
+        end
+        local target = tonumber(Config.RebirthTargetValue)
+        if target == nil or target ~= target then target = 0 end
+        if target == M.huge then
+            -- Inf = non-stop rebirth (never stops)
+            Telemetry.rebTargetReached = false
+            return false
+        end
+        local cur = (curReb ~= nil) and curReb or Telemetry.getStatNum("Rebirths")
+        if cur >= target then
+            local wasReached = Telemetry.rebTargetReached
+            Telemetry.rebTargetReached = true
+            if Config.AutoRebirth then
+                Runtime.SessionTokens.reb += 1
+                Telemetry.rebCooldownLeft = 0
+                if Runtime.Setters and Runtime.Setters.AutoRebirth then
+                    Runtime.Setters.AutoRebirth(false, true)
+                else
+                    Config.AutoRebirth = false
+                end
+            end
+            Telemetry.disableGamepassAutoRebirth(instantForce or (not wasReached))
+            return true
+        else
+            Telemetry.rebTargetReached = false
+            Telemetry.gamepassAutoRebDisabled = false
+            return false
+        end
+    end
     function Telemetry.resetPunch()
         Telemetry.punStartTime = M.clock(); Telemetry.punchesTotal = 0
         Telemetry.punchTracker = Telemetry.newTracker()
@@ -11201,19 +11517,91 @@ do
 
     function UIBuilders.Rebirth(P, ctx)
         local UI = ctx.UI
-        local createStatusLabel, createSmallBtn, createToggle = ctx.createStatusLabel, ctx.createSmallBtn, ctx.createToggle
-        UI.rebStatus   = createStatusLabel(P, "Status: Inactive", Theme.Red, true, 10)
-        UI.rebRuntime  = createStatusLabel(P, "Runtime: 0d 0h 0m 0s", Theme.Text, false, 9)
-        UI.rebValLine  = createStatusLabel(P, "Rebirths: 0 | Gained: 0 (+0/reb)", Theme.Text, false, 9)
-        UI.rebProgLine = createStatusLabel(P, "Next Rebirth: 0% (0 / 25K Str) | ETA: --", Theme.CyberCyan, false, 8)
-        UI.rebAvgLine  = createStatusLabel(P, "Average: --/6s | --/h | --/d | --/w | --/mo | --/y", Theme.Text, false, 8)
+        local createStatusLabel, createSmallBtn, createToggle, createNumberInput =
+            ctx.createStatusLabel, ctx.createSmallBtn, ctx.createToggle, ctx.createNumberInput
+        UI.rebStatus     = createStatusLabel(P, "Status: Inactive", Theme.Red, true, 10)
+        UI.rebRuntime    = createStatusLabel(P, "Runtime: 0d 0h 0m 0s", Theme.Text, false, 9)
+        UI.rebValLine    = createStatusLabel(P, "Rebirths: 0 | Gained: 0 (+0/reb)", Theme.Text, false, 9)
+        UI.rebTargetLine = createStatusLabel(P, "Rebirth Target: OFF", Theme.Muted, false, 9)
+        UI.rebProgLine   = createStatusLabel(P, "Next Rebirth: 0% (0 / 25K Str) | ETA: --", Theme.CyberCyan, false, 8)
+        UI.rebAvgLine    = createStatusLabel(P, "Average: --/6s | --/h | --/d | --/w | --/mo | --/y", Theme.Text, false, 8)
         createSmallBtn(P, "Reset Calcs", Theme.Red, Telemetry.resetRebirth)
-        createToggle(P, "Rebirth", "Auto Rebirth (6.00s Legit Gamepass Pace)", "AutoRebirth", nil, function()
+        createToggle(P, "Rebirth", "Auto Rebirth (6.00s Legit Gamepass Pace)", "AutoRebirth", nil, function(state)
             Runtime.SessionTokens.reb += 1
             Telemetry.rebCycleDuration = LEGIT_GAMEPASS_REBIRTH_COOLDOWN
+            if state and Telemetry.enforceRebirthTarget(Telemetry.getStatNum("Rebirths"), true) then
+                return
+            end
             task.defer(Remotes.refresh, false)
         end)
         createToggle(P, "Rebirth", "Threshold Guard (Wait Until Str Ready)", "SmartRebirthGuard", nil, nil)
+        createToggle(P, "Rebirth", "Target Rebirth", "RebirthTargetEnabled", nil, function(state)
+            if state then
+                Telemetry.gamepassAutoRebDisabled = false
+                Telemetry.enforceRebirthTarget(Telemetry.getStatNum("Rebirths"), true)
+            else
+                Telemetry.rebTargetReached = false
+                Telemetry.gamepassAutoRebDisabled = false
+            end
+        end, "stops Auto Rebirth & gamepass Auto Rebirth once target is met")
+
+        local programmaticTargetEdit = false
+        local function formatRebTarget(n)
+            if n == M.huge then return "Inf" end
+            n = M.max(0, tonumber(n) or 0)
+            if n >= 1e7 then return Core.fmt(n) end
+            return tostring(M.floor(n))
+        end
+        local function applyTypedRebTarget(rawText, isFinalCommit)
+            local parsed = Core.parseSmartInput(rawText)
+            if parsed.isInf then
+                Config.RebirthTargetValue = M.huge
+                if Config.RebirthTargetEnabled then
+                    Telemetry.enforceRebirthTarget(Telemetry.getStatNum("Rebirths"), true)
+                end
+                return "Inf"
+            elseif not parsed.invalid and not parsed.isNaN and parsed.num ~= nil and parsed.num >= 0 then
+                local n = (parsed.num < 1e15) and M.floor(parsed.num) or parsed.num
+                Config.RebirthTargetValue = M.max(0, n)
+                if Config.RebirthTargetEnabled then
+                    Telemetry.enforceRebirthTarget(Telemetry.getStatNum("Rebirths"), true)
+                end
+                return formatRebTarget(Config.RebirthTargetValue)
+            elseif isFinalCommit then
+                Config.RebirthTargetValue = 0
+                if Config.RebirthTargetEnabled then
+                    Telemetry.enforceRebirthTarget(Telemetry.getStatNum("Rebirths"), true)
+                end
+                return "0"
+            end
+            return nil
+        end
+
+        UI.rebTargetInput = createNumberInput(P, "Rebirth Target (0 - Googol | Inf)", "RebirthTargetValue", 0, nil, true, function()
+            if Config.RebirthTargetEnabled then
+                Telemetry.enforceRebirthTarget(Telemetry.getStatNum("Rebirths"), true)
+            end
+        end, false, function(valOrParsed)
+            if type(valOrParsed) == "number" then
+                return formatRebTarget(valOrParsed)
+            end
+            programmaticTargetEdit = true
+            local formatted = applyTypedRebTarget(UI.rebTargetInput and UI.rebTargetInput.Text or "0", true) or "0"
+            if UI.rebTargetInput then UI.rebTargetInput.TextColor3 = Theme.CyberCyan end
+            task.defer(function() programmaticTargetEdit = false end)
+            return formatted
+        end)
+
+        UI.rebTargetInput:GetPropertyChangedSignal("Text"):Connect(function()
+            if programmaticTargetEdit then return end
+            local txt = UI.rebTargetInput.Text or ""
+            local parsed = Core.parseSmartInput(txt)
+            local valid = parsed.isInf or (not parsed.invalid and not parsed.isNaN and parsed.num ~= nil and parsed.num >= 0)
+            UI.rebTargetInput.TextColor3 = valid and Theme.CyberCyan or Theme.Yellow
+            if valid then
+                applyTypedRebTarget(txt, false)
+            end
+        end)
     end
 
     function UIBuilders.Punch(P, ctx)
@@ -11652,6 +12040,9 @@ local function startLoops()
                     Telemetry.rebConfirmedSeq += 1
                 end
                 Telemetry.lastKnownRebirthCount = num
+                if Config.RebirthTargetEnabled then
+                    Telemetry.enforceRebirthTarget(num, true)
+                end
             end))
         end
     end
@@ -12215,7 +12606,11 @@ local function startLoops()
             local strEta = (missingStr <= 0) and 0 or ((strRate > 0) and (missingStr / strRate) or M.huge)
 
             if UI.rebStatus then
-                if not Config.AutoRebirth then UI.rebStatus.Text = "Status: Inactive"; UI.rebStatus.TextColor3 = Theme.Red
+                if Config.RebirthTargetEnabled and Telemetry.rebTargetReached then
+                    local tgtStr = (Config.RebirthTargetValue == M.huge) and "Inf" or Core.fmt(Config.RebirthTargetValue)
+                    UI.rebStatus.Text = M.fmtStr("Status: Target Reached (%s / %s)", Core.fmt(curReb), tgtStr)
+                    UI.rebStatus.TextColor3 = Theme.CyberCyan
+                elseif not Config.AutoRebirth then UI.rebStatus.Text = "Status: Inactive"; UI.rebStatus.TextColor3 = Theme.Red
                 elseif Telemetry.rebCooldownLeft > 0 then
                     UI.rebStatus.Text = M.fmtStr("Status: %s | %.2fs / 6.00s", Telemetry.rebHasServerCd and "Server CD" or "Gamepass CD", Telemetry.rebCooldownLeft)
                     UI.rebStatus.TextColor3 = Theme.Green
@@ -12227,6 +12622,23 @@ local function startLoops()
             if UI.rebValLine then
                 local mt = (Telemetry.lastRebGainPerCycle > 0) and M.fmtStr(" (+%s/reb)", Core.fmtCompact(Telemetry.lastRebGainPerCycle)) or ""
                 UI.rebValLine.Text = M.fmtStr("Rebirths: %s | Gained: %s%s", Core.fmt(curReb), Core.fmt(rebGain), mt)
+            end
+            if UI.rebTargetLine then
+                if not Config.RebirthTargetEnabled then
+                    UI.rebTargetLine.Text = "Rebirth Target: OFF"
+                    UI.rebTargetLine.TextColor3 = Theme.Muted
+                elseif Config.RebirthTargetValue == M.huge then
+                    UI.rebTargetLine.Text = M.fmtStr("Rebirth Target: %s / Inf (Non-Stop)", Core.fmt(curReb))
+                    UI.rebTargetLine.TextColor3 = Theme.SakuraSoft
+                elseif curReb >= (tonumber(Config.RebirthTargetValue) or 0) then
+                    local gpTag = Telemetry.gamepassAutoRebDisabled and " | Gamepass OFF" or ""
+                    UI.rebTargetLine.Text = M.fmtStr("Rebirth Target: REACHED (%s / %s)%s", Core.fmt(curReb), Core.fmt(Config.RebirthTargetValue), gpTag)
+                    UI.rebTargetLine.TextColor3 = Theme.Green
+                else
+                    local left = M.max(0, (tonumber(Config.RebirthTargetValue) or 0) - curReb)
+                    UI.rebTargetLine.Text = M.fmtStr("Rebirth Target: %s / %s (%s left)", Core.fmt(curReb), Core.fmt(Config.RebirthTargetValue), Core.fmt(left))
+                    UI.rebTargetLine.TextColor3 = Theme.SakuraSoft
+                end
             end
             if UI.rebProgLine then
                 UI.rebProgLine.Text = M.fmtStr("Next Rebirth: %.1f%% (%s / %s Str) | ETA: %s",
@@ -12513,9 +12925,14 @@ local function startLoops()
                     lastToken = myToken
                     wasCool = false; rebTriedAt = nil; rebTriedSeq = 0
                 end
+                local curRebCheck = Telemetry.getStatNum("Rebirths")
+                if Config.RebirthTargetEnabled and Telemetry.enforceRebirthTarget(curRebCheck, false) then
+                    wasCool = false; rebTriedAt = nil; Telemetry.rebCooldownLeft = 0
+                    return
+                end
                 if Config.AutoRebirth then
                     local now = M.clock()
-                    local curReb = Telemetry.getStatNum("Rebirths")
+                    local curReb = curRebCheck
                     if Telemetry.lastKnownRebirthCount == nil then
                         Telemetry.lastKnownRebirthCount = curReb
                     elseif curReb > Telemetry.lastKnownRebirthCount then
@@ -12690,7 +13107,7 @@ local function startLoops()
                     stepRepEngine(dt)
                 end
                 Perf.drainRepPopupQueue()
-                if Config.AutoRebirth or Telemetry.rebCooldownLeft > 0 then
+                if Config.AutoRebirth or Config.RebirthTargetEnabled or Telemetry.rebCooldownLeft > 0 then
                     stepRebirthEngine()
                 end
                 if Config.AutoKillBoss or Config.AutoPunch then
@@ -12864,6 +13281,8 @@ hardRefresh = function()
     resetAllFeaturesToNormal()
     teardownUIOnly()
     Remotes.muscleList = {}; Remotes.toolRemotes = {}; Remotes.combatRemotes = {}; Remotes.rebirthList = {}
+    Remotes.autoRebirthSettingRemotes = {}
+    Telemetry.rebTargetReached = false; Telemetry.gamepassAutoRebDisabled = false
     Remotes.punchRemotes = {}; Remotes.confirmedRebirthRemote = nil
     Remotes.questRemotes = {}; Remotes.dailyRemotes = {}; Remotes.chestRemotes = {}; Remotes.genericRewardRemotes = {}
     Remotes.timeRewardRemotes = {}; Remotes.wheelRemotes = {}; Remotes.wheelChanceItems = {}
