@@ -750,17 +750,17 @@ end
 -- Theme & Visibility-Aware UI Construction Primitives (Low Lag)
 ----------------------------------------------------------------
 local Theme = {
-    Bg           = Color3.fromRGB(11, 9, 17),
-    BgGlass      = Color3.fromRGB(17, 13, 26),
-    Header       = Color3.fromRGB(32, 16, 44),
+    Bg           = Color3.fromRGB(0, 0, 0),
+    BgGlass      = Color3.fromRGB(0, 0, 0),
+    Header       = Color3.fromRGB(0, 0, 0),
     HeaderAccent = Color3.fromRGB(255, 92, 162),
     SakuraPink   = Color3.fromRGB(255, 138, 194),
     SakuraSoft   = Color3.fromRGB(255, 182, 217),
     CyberCyan    = Color3.fromRGB(92, 242, 214),
-    TabBar       = Color3.fromRGB(16, 12, 24),
+    TabBar       = Color3.fromRGB(0, 0, 0),
     TabPill      = Color3.fromRGB(235, 68, 138),
-    Panel        = Color3.fromRGB(15, 11, 23),
-    Card         = Color3.fromRGB(24, 18, 36),
+    Panel        = Color3.fromRGB(0, 0, 0),
+    Card         = Color3.fromRGB(6, 6, 8),
     SwitchOff    = Color3.fromRGB(44, 34, 62),
     SwitchOn     = Color3.fromRGB(240, 72, 145),
     Green        = Color3.fromRGB(88, 245, 158),
@@ -924,18 +924,8 @@ do
                         if statusLED.img and statusLED.img.Parent then
                             statusLED.img.Rotation = (t * 115) % 360
                         end
-                        if statusLED.outerGrad and statusLED.outerGrad.Parent then
-                            statusLED.outerGrad.Rotation = (t * 210) % 360
-                        end
-                        if statusLED.innerGrad and statusLED.innerGrad.Parent then
-                            statusLED.innerGrad.Rotation = (360 - ((t * 165) % 360)) % 360
-                        end
                         if statusLED.scale and statusLED.scale.Parent then
-                            statusLED.scale.Scale = 1.0 + 0.06 * M.sin(t * 3.6)
-                        end
-                        if statusLED.core and statusLED.core.Parent then
-                            local sh = M.abs(M.sin(t * 4.2))
-                            statusLED.core.BackgroundTransparency = statusLED.hasImg and (0.64 + sh * 0.28) or (0.12 + sh * 0.36)
+                            statusLED.scale.Scale = 1.0 + 0.05 * M.sin(t * 3.6)
                         end
                     elseif statusLED and statusLED.Parent then
                         statusLED.BackgroundTransparency = 0.16 + M.abs(M.sin(t * 2.8)) * 0.48
@@ -1096,10 +1086,10 @@ do
             Size = UDim2.fromOffset(fullW, fullH),
             AnchorPoint = Vector2.new(0.5, 0.5),
             Position = UDim2.fromScale(0.5, 0.5),
-            BackgroundColor3 = Theme.Bg, BackgroundTransparency = 0.04, BorderSizePixel = 0, Visible = true, Active = true,
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0, BorderSizePixel = 0, Visible = true, Active = true,
         }, UI.GUI)
         UILib.corner(UI.Main, UDim.new(0, 12))
-        UILib.gradient(UI.Main, Color3.fromRGB(16, 12, 26), Color3.fromRGB(9, 7, 15), 135)
+        UILib.gradient(UI.Main, Color3.fromRGB(0, 0, 0), Color3.fromRGB(0, 0, 0), 135)
         local mainStrokeGrad = UILib.gradient(UILib.stroke(UI.Main, Theme.SakuraPink, 1.8), Theme.SakuraPink, Theme.CyberCyan, 0)
 
         local vp = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or Vector2.new(1280, 720)
@@ -1113,62 +1103,28 @@ do
         UI.VFXLayer = UILib.new("Frame", {Size = UDim2.new(1, 60, 1, 60), Position = UDim2.fromOffset(-30, -30), BackgroundTransparency = 1, ClipsDescendants = false, ZIndex = 25}, UI.Main)
         UILib.startPetalPool(UI, myGen, fullW, fullH)
 
-        local Header = UILib.new("Frame", {Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Theme.Header, BorderSizePixel = 0, ZIndex = 5}, UI.Main)
+        local Header = UILib.new("Frame", {Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0, BorderSizePixel = 0, ZIndex = 5}, UI.Main)
         UILib.corner(Header, UDim.new(0, 12))
-        UILib.gradient(Header, Color3.fromRGB(46, 18, 60), Color3.fromRGB(20, 14, 34), 0)
+        UILib.gradient(Header, Color3.fromRGB(0, 0, 0), Color3.fromRGB(0, 0, 0), 0)
         local StatusOrb = UILib.new("Frame", {
             Size = UDim2.fromOffset(18, 18), Position = UDim2.fromOffset(8, 8),
-            BackgroundColor3 = Color3.fromRGB(6, 4, 14), BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 7,
+            BackgroundColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 7,
         }, Header)
         UILib.corner(StatusOrb, UDim.new(1, 0))
-        local orbOuterStroke = UILib.stroke(StatusOrb, Color3.new(1, 1, 1), 1.35, 0.08)
-        local orbOuterGrad = UILib.new("UIGradient", {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0.00, Color3.fromRGB(255, 88, 214)),
-                ColorSequenceKeypoint.new(0.35, Color3.fromRGB(165, 118, 255)),
-                ColorSequenceKeypoint.new(0.70, Color3.fromRGB(92, 224, 255)),
-                ColorSequenceKeypoint.new(1.00, Color3.fromRGB(255, 88, 214)),
-            }),
-            Rotation = 0,
-        }, orbOuterStroke)
         local orbImg = UILib.new("ImageLabel", {
             Size = UDim2.new(1.24, 0, 1.24, 0), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
             BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Crop, Image = "", Visible = false, ZIndex = 8,
         }, StatusOrb)
+        UILib.corner(orbImg, UDim.new(1, 0))
         local orbScale = UILib.new("UIScale", {Scale = 1}, orbImg)
-        local orbHasImg = false
         pcall(function()
             local getAsset = getcustomasset or getsynasset
             if getAsset and isfile and isfile(YUI_ORB_FILE) then
                 orbImg.Image = getAsset(YUI_ORB_FILE)
                 orbImg.Visible = true
-                orbHasImg = true
             end
         end)
-        local orbInnerRing = UILib.new("Frame", {
-            Size = UDim2.new(0.64, 0, 0.64, 0), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-            BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 9,
-        }, StatusOrb)
-        UILib.corner(orbInnerRing, UDim.new(1, 0))
-        local orbInnerStroke = UILib.stroke(orbInnerRing, Color3.new(1, 1, 1), orbHasImg and 0.9 or 1.25, orbHasImg and 0.42 or 0.12)
-        local orbInnerGrad = UILib.new("UIGradient", {
-            Color = ColorSequence.new({
-                ColorSequenceKeypoint.new(0.00, Color3.fromRGB(110, 195, 255)),
-                ColorSequenceKeypoint.new(0.50, Color3.fromRGB(255, 115, 230)),
-                ColorSequenceKeypoint.new(1.00, Color3.fromRGB(110, 195, 255)),
-            }),
-            Rotation = 120,
-        }, orbInnerStroke)
-        local orbCore = UILib.new("Frame", {
-            Size = UDim2.new(0.28, 0, 0.28, 0), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-            BackgroundColor3 = Color3.fromRGB(255, 190, 248), BackgroundTransparency = orbHasImg and 0.72 or 0.16,
-            BorderSizePixel = 0, ZIndex = 10,
-        }, StatusOrb)
-        UILib.corner(orbCore, UDim.new(1, 0))
-        local StatusLED = {
-            img = orbImg, scale = orbScale, outerGrad = orbOuterGrad,
-            innerGrad = orbInnerGrad, core = orbCore, hasImg = orbHasImg,
-        }
+        local StatusLED = {img = orbImg, scale = orbScale}
 
         UILib.new("TextLabel", {
             Size = UDim2.new(1, -152, 1, 0), Position = UDim2.fromOffset(30, 0), BackgroundTransparency = 1,
