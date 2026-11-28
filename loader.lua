@@ -4256,6 +4256,8 @@ local BossEngine = {
     savedOriginCF = nil,
     collectingChest = false,
     chestWaitUntil = 0,
+    skipBeachAfterHop = false,
+    skipBeachUntil = 0,
     chestFoundAt = 0,
     chestLastTriggerT = 0,
     chestLastScanT = -100,
@@ -6090,6 +6092,54 @@ do
         return m ~= nil or tool ~= nil
     end
 
+    local BEACH_HOP_FILE = "yui_beach_boss_hop.json"
+    local BEACH_HOP_COOLDOWN = 720
+
+    local function loadBeachHopState()
+        pcall(function()
+            if type(isfile) == "function" and type(readfile) == "function" and isfile(BEACH_HOP_FILE) then
+                local raw = readfile(BEACH_HOP_FILE)
+                if type(raw) == "string" and raw ~= "" then
+                    local okD, rec = pcall(HttpService.JSONDecode, HttpService, raw)
+                    if okD and type(rec) == "table" and tonumber(rec.killedAt) then
+                        local age = os.time() - tonumber(rec.killedAt)
+                        local curJob = tostring(game.JobId or "")
+                        local prevJob = tostring(rec.jobId or "")
+                        -- Only skip Beach Boss if the player server-hopped to a DIFFERENT server within the same boss cycle
+                        if age >= 0 and age < BEACH_HOP_COOLDOWN and prevJob ~= "" and curJob ~= "" and prevJob ~= curJob then
+                            BossEngine.skipBeachAfterHop = true
+                            BossEngine.skipBeachUntil = tonumber(rec.killedAt) + BEACH_HOP_COOLDOWN
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    local function recordBeachBossKilledInServer()
+        pcall(function()
+            if type(writefile) == "function" then
+                local payload = HttpService:JSONEncode({
+                    jobId = tostring(game.JobId or ""),
+                    placeId = tonumber(game.PlaceId) or 0,
+                    killedAt = os.time(),
+                })
+                writefile(BEACH_HOP_FILE, payload)
+            end
+        end)
+    end
+
+    loadBeachHopState()
+
+    local function shouldSkipBeachOnHop()
+        if not BossEngine.skipBeachAfterHop then return false end
+        if os.time() >= (BossEngine.skipBeachUntil or 0) then
+            BossEngine.skipBeachAfterHop = false
+            return false
+        end
+        return true
+    end
+
     local function getSelectedBossObj()
         local sel = Config.SelectedBoss or "Common Boss"
         local selOpt = nil
@@ -6101,13 +6151,15 @@ do
         local wantTier = selOpt and selOpt.tier
 
         if keys[1] == "*" then
-            -- Priority 1: Non-Event / Beach Bosses FIRST
-            for _, b in ipairs(Combat.bossTargets) do
-                if b and b.model and b.model.Parent and b.part and b.part.Parent and (tonumber(b.hp) or 0) > 0 and b.isEvent ~= true then
-                    return b
+            -- Priority 1: Non-Event / Beach Bosses FIRST (skipped ONLY if already killed in another server before hopping!)
+            if not shouldSkipBeachOnHop() then
+                for _, b in ipairs(Combat.bossTargets) do
+                    if b and b.model and b.model.Parent and b.part and b.part.Parent and (tonumber(b.hp) or 0) > 0 and b.isEvent ~= true then
+                        return b
+                    end
                 end
             end
-            -- Priority 2: Alien / Event Bosses only when NO Non-Event / Beach Boss is spawned
+            -- Priority 2: Alien / Event Bosses when no Beach Boss is spawned OR Beach Boss is skipped after server hop
             for _, b in ipairs(Combat.bossTargets) do
                 if b and b.model and b.model.Parent and b.part and b.part.Parent and (tonumber(b.hp) or 0) > 0 and b.isEvent == true then
                     return b
@@ -7745,6 +7797,7 @@ do
                         BossEngine.eventKills += 1
                     else
                         BossEngine.normalKills += 1
+                        recordBeachBossKilledInServer()
                     end
                 end
                 -- Always check for a boss reward chest after boss dies OR despawns (Beach Boss often destroys the model on kill before HP reads 0!)
@@ -7910,7 +7963,9 @@ do
             BossEngine.lastHoverCF = nil
             BossEngine.liveDps = BossEngine.liveDps * 0.90
             local alt = Combat.bossTargets[1]
-            if alt then
+            if Config.SelectedBoss == "All Bosses (Auto)" and shouldSkipBeachOnHop() then
+                BossEngine.statusText = "Action: Skipped Beach Boss (Server Hop) — Waiting Alien Boss..."
+            elseif alt then
                 local altKind = alt.isEvent and "Event" or (alt.tierWord or "Normal")
                 BossEngine.statusText = M.fmtStr("Action: Waiting %s (Spawned: [%s] %s)", tostring(Config.SelectedBoss), altKind, alt.name)
             else
@@ -11832,6 +11887,7 @@ local function startLoops()
     -- 1. ZERO-LAG BURST REPS + TELEMETRY + LOW-LAG RENDER STEP
     do
         local carryRemainder, autoRepAcc, activeToken = 0, 0, Runtime.SessionTokens.rep
+        local repPingScale, repDrainUntil = 1.0, 0
         local calibCheckT, calibPrevSum, lastRewardSpinScan = M.clock(), 0, 0
         local REP_PRESET_RATES = {
             Default = 468,
@@ -11953,51 +12009,89 @@ local function startLoops()
                 local isCustom = (Config.RepBurstMode == "Custom")
                 local isUnlimited = Config.RepLimiterOpen or (rawTarget == M.huge)
                 local presetRate = (not isCustom) and REP_PRESET_RATES[Config.RepBurstMode] or nil
-                local targetPerSec = isUnlimited and 60000 or (presetRate or M.max(1, M.floor(rawTarget)))
+                local targetPerSec = isUnlimited and 1200 or (presetRate or M.max(1, M.floor(rawTarget)))
 
-                local effectiveRate = M.max(1, targetPerSec)
-                local maxFrameCap = isUnlimited and 600 or M.clamp(M.ceil(effectiveRate * 0.08), 24, 1500)
+                -- Low-Ping Outgoing Queue Governor: keeps Roblox's reliable packet queue drained
+                -- so movement, jump, and character reset NEVER freeze even at 800+, 1000+, 2000+, or Inf!
+                local liveP = tonumber(Telemetry.livePing) or 0
+                local baseP = M.max(20, tonumber(Telemetry.baselinePing) or 60)
+                local pingDelta = liveP - baseP
+                if pingDelta > 42 or liveP > (baseP + 55) or liveP > 220 then
+                    repPingScale = M.max(0.12, repPingScale * 0.65)
+                    repDrainUntil = nowT + 0.14
+                    carryRemainder = 0
+                elseif pingDelta > 22 or safeDt > 0.042 then
+                    repPingScale = M.max(0.22, repPingScale * 0.86)
+                    carryRemainder = M.min(carryRemainder, 2)
+                elseif pingDelta > 12 then
+                    repPingScale = M.max(0.45, repPingScale * 0.94)
+                elseif pingDelta <= 10 and safeDt <= 0.032 then
+                    repPingScale = M.min(1.0, repPingScale + safeDt * 0.45)
+                end
+
+                if nowT < repDrainUntil then
+                    carryRemainder = 0
+                    return
+                end
+
+                -- Hard network-safe ceiling (~960/s max sustainable reliable remotes without choking replication)
+                local safeTarget = M.min(targetPerSec, 960)
+                local effectiveRate = M.max(1, M.floor(safeTarget * repPingScale))
+                local hardFrameCap = (pingDelta > 18) and 4 or ((pingDelta > 10) and 8 or 16)
+                local maxFrameCap = M.clamp(M.ceil(effectiveRate * safeDt * 1.15), 1, hardFrameCap)
                 local quota = (effectiveRate * safeDt) + carryRemainder
                 local needed = M.min(M.floor(quota), maxFrameCap)
                 local done = 0
 
                 if needed > 0 and Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep then
-                    local baseSlice = isUnlimited and 0.0042 or M.clamp(budgetSec * 2.0, 0.0022, 0.0048)
+                    local baseSlice = M.clamp(budgetSec * 1.35, 0.0012, 0.0026)
                     if Config.ScriptZeroLag and (Telemetry.liveFrameMs > 20 or Perf.frameProtectActive) then
-                        baseSlice = M.min(baseSlice, 0.0018)
+                        baseSlice = M.min(baseSlice, 0.0014)
                     end
-                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, needed, baseSlice, 40)
+                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, needed, baseSlice, 12)
                     if done > 0 then Telemetry.recordEvent(Telemetry.repTracker, done) end
                 end
                 local rem = quota - done
                 if rem ~= rem or rem < 0 then rem = 0 end
-                carryRemainder = M.clamp(rem, 0, maxFrameCap)
+                carryRemainder = M.clamp(rem, 0, 2)
 
             elseif Config.AIFastRep then
-                local pingDelta = Telemetry.livePing - Telemetry.baselinePing
-                local scaleBoost = M.clamp((tonumber(Config.CycleRate) or 100) / 100, 0.5, 5)
-                local maxAiRate = M.max(360, M.floor(1500 * scaleBoost))
-                if safeDt > 0.045 or pingDelta > 75 then
-                    Telemetry.aiCurrentRepRate = M.max(220, M.floor(Telemetry.aiCurrentRepRate * 0.90))
-                elseif safeDt <= 0.036 and pingDelta <= 50 then
-                    Telemetry.aiCurrentRepRate = M.min(maxAiRate, M.floor(Telemetry.aiCurrentRepRate * 1.08 + 14))
+                local liveP = tonumber(Telemetry.livePing) or 0
+                local baseP = M.max(20, tonumber(Telemetry.baselinePing) or 60)
+                local pingDelta = liveP - baseP
+                local scaleBoost = M.clamp((tonumber(Config.CycleRate) or 100) / 100, 0.5, 2.0)
+                local maxAiRate = M.min(840, M.max(320, M.floor(620 * scaleBoost)))
+                if pingDelta > 38 or liveP > (baseP + 50) or liveP > 210 then
+                    Telemetry.aiCurrentRepRate = M.max(140, M.floor(Telemetry.aiCurrentRepRate * 0.72))
+                    repDrainUntil = nowT + 0.12
+                    carryRemainder = 0
+                elseif safeDt > 0.042 or pingDelta > 18 then
+                    Telemetry.aiCurrentRepRate = M.max(180, M.floor(Telemetry.aiCurrentRepRate * 0.88))
+                elseif safeDt <= 0.032 and pingDelta <= 10 then
+                    Telemetry.aiCurrentRepRate = M.min(maxAiRate, M.floor(Telemetry.aiCurrentRepRate * 1.04 + 6))
                 end
 
-                local maxAiFrame = M.clamp(M.ceil(Telemetry.aiCurrentRepRate * 0.065), 48, 360)
+                if nowT < repDrainUntil then
+                    carryRemainder = 0
+                    return
+                end
+
+                local hardAiCap = (pingDelta > 16) and 4 or 12
+                local maxAiFrame = M.clamp(M.ceil(Telemetry.aiCurrentRepRate * safeDt * 1.15), 1, hardAiCap)
                 local exactQuota = (Telemetry.aiCurrentRepRate * safeDt) + carryRemainder
                 local toFire = M.min(M.floor(exactQuota), maxAiFrame)
                 local done = 0
                 if toFire > 0 and Runtime.RepGateOpen and activeToken == Runtime.SessionTokens.rep then
-                    local aiBudget = M.clamp(budgetSec * 1.6, 0.0018, 0.0042)
+                    local aiBudget = M.clamp(budgetSec * 1.25, 0.0012, 0.0024)
                     if Config.ScriptZeroLag and (Telemetry.liveFrameMs > 20 or Perf.frameProtectActive) then
-                        aiBudget = M.min(aiBudget, 0.0016)
+                        aiBudget = M.min(aiBudget, 0.0014)
                     end
-                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, toFire, aiBudget, 25)
+                    done = fireRepBatch(remote, isFunc, fireFn, argCount, arg1, arg2, toFire, aiBudget, 10)
                     if done > 0 then Telemetry.recordEvent(Telemetry.repTracker, done) end
                 end
                 local rem = exactQuota - done
                 if rem ~= rem or rem < 0 then rem = 0 end
-                carryRemainder = M.clamp(rem, 0, maxAiFrame)
+                carryRemainder = M.clamp(rem, 0, 2)
 
             elseif Config.AutoRep then
                 autoRepAcc = M.min(autoRepAcc + safeDt * M.clamp(1 + (jumpMult - 1) * 0.15, 1, 4), 0.32)
